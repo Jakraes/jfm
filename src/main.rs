@@ -48,7 +48,6 @@ fn main() {
         }
     };
 
-    // Check if we should enter interactive mode
     if args.query.is_none() && args.query_file.is_none() {
         run_interactive_mode(root_value, &args.out);
     } else {
@@ -80,19 +79,14 @@ fn run_interactive_mode(root_value: jfm::lexer::Value, out_file: &Option<PathBuf
 
         let mut line = String::new();
         match io::stdin().read_line(&mut line) {
-            Ok(0) => {
-                // EOF (Ctrl+D on Unix, Ctrl+Z on Windows)
-                break;
-            }
+            Ok(0) => break,
             Ok(_) => {
                 let trimmed = line.trim();
                 
-                // Handle exit commands
                 if trimmed == "exit" || trimmed == "quit" {
                     break;
                 }
 
-                // Add line to query
                 query.push_str(&line);
             }
             Err(e) => {
@@ -102,7 +96,6 @@ fn run_interactive_mode(root_value: jfm::lexer::Value, out_file: &Option<PathBuf
         }
     }
 
-    // Execute the query that was built
     let trimmed_query = query.trim();
     if trimmed_query.is_empty() {
         eprintln!("No query entered.");
@@ -126,25 +119,21 @@ fn execute_query(query_str: &str, root_value: &jfm::lexer::Value, out_file: &Opt
         }
     };
 
-    // Write to stdout (always in interactive, or when no output file specified in non-interactive)
     if out_file.is_none() || is_interactive {
         print!("{}", result);
         io::stdout().flush().unwrap();
     }
 
-    // Write to file if specified
     if let Some(out_path) = out_file {
         use std::fs::OpenOptions;
         use std::io::Write;
         
         let file_result = if is_interactive {
-            // In interactive mode, append to file
             OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(out_path)
         } else {
-            // In non-interactive mode, write (overwrite) to file
             OpenOptions::new()
                 .create(true)
                 .write(true)
@@ -200,7 +189,14 @@ fn convert_json_to_internal(json_val: serde_json::Value) -> jfm::lexer::Value {
 }
 
 fn value_to_json_string(val: &jfm::lexer::Value) -> String {
+    value_to_json_string_with_indent(val, 0)
+}
+
+fn value_to_json_string_with_indent(val: &jfm::lexer::Value, indent: usize) -> String {
     use jfm::lexer::Value;
+    const INDENT_SIZE: usize = 2;
+    let indent_str = " ".repeat(indent * INDENT_SIZE);
+    let next_indent_str = " ".repeat((indent + 1) * INDENT_SIZE);
 
     match val {
         Value::Null => "null".to_string(),
@@ -215,16 +211,62 @@ fn value_to_json_string(val: &jfm::lexer::Value) -> String {
         Value::String(s) => format!("\"{}\"", s),
         Value::Array(arr) => {
             let items = arr.borrow();
-            let elements: Vec<String> = items.iter().map(value_to_json_string).collect();
-            format!("[{}]", elements.join(", "))
+            if items.is_empty() {
+                return "[]".to_string();
+            }
+            
+            let elements: Vec<String> = items
+                .iter()
+                .map(|item| {
+                    let formatted = value_to_json_string_with_indent(item, indent + 1);
+                    formatted
+                        .lines()
+                        .map(|line| format!("{}{}", next_indent_str, line))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .collect();
+            
+            format!("[\n{}\n{}]", elements.join(",\n"), indent_str)
         }
         Value::Object(obj) => {
             let map = obj.borrow();
+            if map.is_empty() {
+                return "{}".to_string();
+            }
+            
             let fields: Vec<String> = map
                 .iter()
-                .map(|(k, v)| format!("\"{}\": {}", k, value_to_json_string(v)))
+                .map(|(k, v)| {
+                    let value_str = value_to_json_string_with_indent(v, indent + 1);
+                    
+                    if value_str.contains('\n') {
+                        let mut lines: Vec<&str> = value_str.lines().collect();
+                        let first_line = lines.remove(0);
+                        let result = format!("\"{}\": {}", k, first_line);
+                        if lines.is_empty() {
+                            result
+                        } else {
+                            format!("{}\n{}", result, lines.join("\n"))
+                        }
+                    } else {
+                        format!("\"{}\": {}", k, value_str)
+                    }
+                })
                 .collect();
-            format!("{{{}}}", fields.join(", "))
+            
+            let formatted_fields: Vec<String> = fields
+                .iter()
+                .map(|field| {
+                    field
+                        .lines()
+                        .map(|line| format!("{}{}", next_indent_str, line))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .collect();
+            
+            format!("{{\n{}\n{}}}", formatted_fields.join(",\n"), indent_str)
         }
     }
 }
