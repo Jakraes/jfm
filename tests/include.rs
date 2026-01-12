@@ -9,18 +9,22 @@ use indexmap::IndexMap;
 /// Helper struct to create and automatically clean up temporary script files
 struct TempScript {
     path: String,
+    escaped_path: String,
 }
 
 impl TempScript {
     fn new(name: &str, content: &str) -> std::io::Result<Self> {
-        let path = format!("/tmp/jfm_test_{}.jfm", name);
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join(format!("jfm_test_{}.jfm", name));
+        let path_str = path.to_string_lossy().to_string();
         let mut file = File::create(&path)?;
         file.write_all(content.as_bytes())?;
-        Ok(Self { path })
+        let escaped_path = path_str.replace('\\', "\\\\");
+        Ok(Self { path: path_str, escaped_path })
     }
 
     fn path(&self) -> &str {
-        &self.path
+        &self.escaped_path
     }
 }
 
