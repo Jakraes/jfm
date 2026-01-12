@@ -1149,6 +1149,39 @@ impl Interpreter {
                     Err(InterpreterError::TypeError("group_by requires array and field name string".to_string()))
                 }
             }
+            "include" => {
+                if args.is_empty() {
+                    return Err(InterpreterError::InvalidOperation("include requires a file path argument".to_string()));
+                }
+                if let Value::String(path) = &args[0] {
+                    // Read the script file
+                    let script_content = std::fs::read_to_string(path.as_ref())
+                        .map_err(|e| InterpreterError::InvalidOperation(format!("Failed to read script file '{}': {}", path, e)))?;
+                    
+                    // Lex the script
+                    let lexer = crate::lexer::lexer();
+                    let tokens: Vec<Token> = lexer
+                        .parse(&script_content)
+                        .into_result()
+                        .map_err(|e| InterpreterError::InvalidOperation(format!("Lexer error in included script: {:?}", e)))?
+                        .into_iter()
+                        .map(|(tok, _)| tok)
+                        .collect();
+                    
+                    // Parse the tokens
+                    let mut parser = TokenParser::new(tokens);
+                    let stmts = parser
+                        .parse()
+                        .map_err(|e| InterpreterError::InvalidOperation(format!("Parser error in included script: {}", e)))?;
+                    
+                    // Execute the script in the current environment
+                    // The included script has access to all current variables including 'root'
+                    let result = self.run(stmts)?;
+                    Ok(result.unwrap_or(Value::Null))
+                } else {
+                    Err(InterpreterError::TypeError("include requires a string path argument".to_string()))
+                }
+            }
             _ => Err(InterpreterError::InvalidOperation(format!("Unknown function: {}", name))),
         }
     }

@@ -15,6 +15,8 @@
   - [Operators](#operators)
   - [Control Flow](#control-flow)
   - [Built-in Functions](#built-in-functions)
+    - [Array Functions](#array-functions)
+    - [Script Functions](#script-functions)
   - [Pipe Operator](#pipe-operator)
 - [Examples](#examples)
 
@@ -408,6 +410,85 @@ sort_by(root.users, "name");  // Sort users by name
 group_by(root.users, "age");  // Groups users by age
 // Returns: {"25": [...], "30": [...], "35": [...]}
 ```
+
+#### Script Functions
+
+**`include(path)`** - Executes an external script file and returns its result:
+
+The `include` function allows you to modularize your queries by executing external script files. The included script has access to all variables in the current scope, including `root`, and can return any value.
+
+```jfm
+// Execute a script and assign its result to a variable
+let result = include("scripts/calculate.jfm");
+
+// Use the result in further computations
+result * 2;
+```
+
+**Basic Usage:**
+
+```jfm
+// File: filter_adults.jfm
+let adults = root.users | .age >= 18;
+adults;
+
+// Main query
+let adult_users = include("filter_adults.jfm");
+count(adult_users);
+```
+
+**Script with Shared Variables:**
+
+Included scripts can access variables defined in the parent scope:
+
+```jfm
+// Main query
+let multiplier = 10;
+let result = include("compute.jfm");  // Script can access 'multiplier'
+result;
+
+// File: compute.jfm
+let base = 5;
+base * multiplier;  // Returns 50
+```
+
+**Nested Includes:**
+
+Scripts can include other scripts, enabling complex modular architectures:
+
+```jfm
+// File: utils.jfm
+let helper_value = 100;
+helper_value;
+
+// File: main_logic.jfm
+let from_utils = include("utils.jfm");
+from_utils * 2;  // Returns 200
+
+// Main query
+include("main_logic.jfm");  // Returns 200
+```
+
+**Returning Complex Data:**
+
+Included scripts can return any data type:
+
+```jfm
+// File: aggregate.jfm
+let ages = root.users | .age;
+let stats = {"average": avg(ages), "total": sum(ages), "count": count(ages)};
+stats;
+
+// Main query
+let statistics = include("aggregate.jfm");
+statistics.average;
+```
+
+**Error Handling:**
+
+- If the file does not exist, an error is returned
+- If the script contains syntax errors, a parse error is returned
+- If the script encounters runtime errors, those are propagated
 
 ### Pipe Operator
 
