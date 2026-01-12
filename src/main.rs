@@ -208,7 +208,15 @@ fn value_to_json_string_with_indent(val: &jfm::lexer::Value, indent: usize) -> S
                 n.to_string()
             }
         }
-        Value::String(s) => format!("\"{}\"", s),
+        Value::String(s) => {
+            let escaped = s
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
+                .replace('\t', "\\t");
+            format!("\"{}\"", escaped)
+        }
         Value::Array(arr) => {
             let items = arr.borrow();
             if items.is_empty() {
