@@ -1229,6 +1229,11 @@ impl Interpreter {
                 result.extend(b.borrow().iter().cloned());
                 Ok(Value::Array(Rc::new(RefCell::new(result))))
             }
+            (Value::Array(a), BinaryOp::Add, b) => {
+                let mut result = a.borrow().clone();
+                result.push(b.clone());
+                Ok(Value::Array(Rc::new(RefCell::new(result))))
+            }
             (a, BinaryOp::Eq, b) => Ok(Value::Bool(self.values_equal(a, b))),
             (a, BinaryOp::NotEq, b) => Ok(Value::Bool(!self.values_equal(a, b))),
             (Value::Number(a), BinaryOp::Greater, Value::Number(b)) => Ok(Value::Bool(a > b)),
