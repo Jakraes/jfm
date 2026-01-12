@@ -1182,6 +1182,43 @@ impl Interpreter {
                     Err(InterpreterError::TypeError("include requires a string path argument".to_string()))
                 }
             }
+            "print" => {
+                use std::io::Write;
+                
+                if args.is_empty() {
+                    println!();
+                    return Ok(Value::Null);
+                }
+                
+                // Format all arguments separated by spaces (like Python's print)
+                let output: Vec<String> = args.iter().map(|arg| self.value_to_string(arg)).collect();
+                println!("{}", output.join(" "));
+                std::io::stdout().flush().ok();
+                
+                Ok(Value::Null)
+            }
+            "input" => {
+                use std::io::{self, Write};
+                
+                // Print prompt if provided
+                if !args.is_empty() {
+                    if let Value::String(prompt) = &args[0] {
+                        print!("{}", prompt);
+                        io::stdout().flush().ok();
+                    }
+                }
+                
+                // Read line from stdin
+                let mut input = String::new();
+                io::stdin()
+                    .read_line(&mut input)
+                    .map_err(|e| InterpreterError::InvalidOperation(format!("Failed to read input: {}", e)))?;
+                
+                // Remove trailing newline
+                let input = input.trim_end_matches('\n').trim_end_matches('\r');
+                
+                Ok(Value::String(Rc::from(input)))
+            }
             _ => Err(InterpreterError::InvalidOperation(format!("Unknown function: {}", name))),
         }
     }
@@ -1335,6 +1372,38 @@ impl Interpreter {
                 })
             }
             _ => false,
+        }
+    }
+
+    fn value_to_string(&self, val: &Value) -> String {
+        match val {
+            Value::Null => "null".to_string(),
+            Value::Bool(b) => b.to_string(),
+            Value::Number(n) => {
+                if n.fract() == 0.0 && n.abs() < 1e15 {
+                    format!("{:.0}", n)
+                } else {
+                    n.to_string()
+                }
+            }
+            Value::String(s) => s.to_string(),
+            Value::Array(arr) => {
+                let items: Vec<String> = arr.borrow().iter().map(|v| self.value_to_display(v)).collect();
+                format!("[{}]", items.join(", "))
+            }
+            Value::Object(obj) => {
+                let fields: Vec<String> = obj.borrow().iter()
+                    .map(|(k, v)| format!("\"{}\": {}", k, self.value_to_display(v)))
+                    .collect();
+                format!("{{{}}}", fields.join(", "))
+            }
+        }
+    }
+
+    fn value_to_display(&self, val: &Value) -> String {
+        match val {
+            Value::String(s) => format!("\"{}\"", s),
+            _ => self.value_to_string(val),
         }
     }
 

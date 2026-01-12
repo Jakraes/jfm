@@ -17,6 +17,7 @@
   - [Built-in Functions](#built-in-functions)
     - [Array Functions](#array-functions)
     - [Script Functions](#script-functions)
+    - [I/O Functions](#io-functions)
   - [Pipe Operator](#pipe-operator)
 - [Examples](#examples)
 
@@ -489,6 +490,92 @@ statistics.average;
 - If the file does not exist, an error is returned
 - If the script contains syntax errors, a parse error is returned
 - If the script encounters runtime errors, those are propagated
+
+#### I/O Functions
+
+**`print(args...)`** - Prints values to standard output:
+
+The `print` function outputs one or more values to stdout, separated by spaces, followed by a newline. It works similarly to Python's `print()` function.
+
+```jfm
+print("Hello, World!");              // Output: Hello, World!
+print("Name:", root.name);           // Output: Name: Alice
+print("Values:", 1, 2, 3);           // Output: Values: 1 2 3
+print();                             // Output: (empty line)
+```
+
+**Printing Different Types:**
+
+```jfm
+// Strings - printed without quotes
+print("Hello");                      // Output: Hello
+
+// Numbers - printed as-is
+print(42);                           // Output: 42
+print(3.14);                         // Output: 3.14
+
+// Booleans
+print(true, false);                  // Output: true false
+
+// Null
+print(null);                         // Output: null
+
+// Arrays - printed in bracket notation
+print([1, 2, 3]);                    // Output: [1, 2, 3]
+
+// Objects - printed in brace notation
+let obj = {"x": 1, "y": 2};
+print(obj);                          // Output: {"x": 1, "y": 2}
+```
+
+**Debugging with print:**
+
+```jfm
+for user in root.users {
+    print("Processing:", user.name, "age:", user.age);
+    // ... processing logic
+}
+```
+
+**Return Value:**
+
+`print` always returns `null`, so it can be used as a statement without affecting the result:
+
+```jfm
+let result = root.users | .age > 25;
+print("Filtered count:", count(result));
+result;  // This is the actual return value
+```
+
+---
+
+**`input(prompt?)`** - Reads a line of input from standard input:
+
+The `input` function reads a line from stdin and returns it as a string. An optional prompt message can be displayed before reading.
+
+```jfm
+let name = input("Enter your name: ");
+print("Hello,", name);
+
+let age = input("Enter your age: ");
+// Note: input always returns a string
+```
+
+**Without Prompt:**
+
+```jfm
+let value = input();  // Waits for input without displaying a prompt
+```
+
+**Interactive Scripts:**
+
+```jfm
+let filename = input("Enter filename to process: ");
+let data = include(filename);
+print("Loaded", count(data), "records");
+```
+
+**Note:** The `input` function is primarily useful in interactive mode or when running jfm scripts that require user interaction. In automated/batch processing scenarios, consider passing data through the JSON input instead.
 
 ### Pipe Operator
 
