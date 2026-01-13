@@ -313,6 +313,44 @@ impl Interpreter {
                     _ => Err(InterpreterError::type_error_at("Range requires numbers", expr.span)),
                 }
             }
+
+            ExprKind::Ternary { condition, then_branch, else_branch } => {
+                let cond_val = self.eval_expr(condition)?;
+                let truthy = match cond_val {
+                    Value::Bool(b) => b,
+                    Value::Null => false,
+                    _ => true,
+                };
+                if truthy {
+                    self.eval_expr(then_branch)
+                } else {
+                    self.eval_expr(else_branch)
+                }
+            }
+
+            ExprKind::NullCoalesce { left, right } => {
+                let left_val = self.eval_expr(left)?;
+                if matches!(left_val, Value::Null) {
+                    self.eval_expr(right)
+                } else {
+                    Ok(left_val)
+                }
+            }
+
+            ExprKind::TemplateLiteral { parts } => {
+                use crate::lexer::TemplatePart;
+                let mut result = String::new();
+                for part in parts {
+                    match part {
+                        TemplatePart::Literal(s) => result.push_str(s),
+                        TemplatePart::Interpolation(expr) => {
+                            let val = self.eval_expr(expr)?;
+                            result.push_str(&self.value_to_string(&val));
+                        }
+                    }
+                }
+                Ok(Value::String(Rc::from(result)))
+            }
         }
     }
 

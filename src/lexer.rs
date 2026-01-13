@@ -22,6 +22,12 @@ pub enum Token {
     Ident(String),
     Number(f64, bool),  // (value, is_float)
     String(String),
+    TemplateStart,           // Start of template literal `
+    TemplateMiddle(String),  // Text between interpolations
+    TemplateEnd(String),     // Final text part before closing `
+    TemplateFull(String),    // Template with no interpolations
+    InterpolationStart,      // ${
+    InterpolationEnd,        // } inside template
     True,
     False,
     Null,
@@ -53,6 +59,8 @@ pub enum Token {
     Comma,
     Colon,
     QuestionDot,
+    Question,
+    NullCoalesce,
 
     Dot,
     Semicolon,
@@ -240,7 +248,25 @@ pub enum ExprKind {
         op: BinaryOp,
         value: Box<Expr>,
     },
+    Ternary {
+        condition: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Box<Expr>,
+    },
+    NullCoalesce {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    TemplateLiteral {
+        parts: Vec<TemplatePart>,
+    },
     Grouped(Box<Expr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TemplatePart {
+    Literal(String),
+    Interpolation(Box<Expr>),
 }
 
 pub fn lexer<'a>()
@@ -263,6 +289,107 @@ pub fn lexer<'a>()
         .ignore_then(none_of("\\\"").or(escape).repeated().collect::<String>())
         .then_ignore(just('"'))
         .map(Token::String);
+
+    // Template string escape sequences
+    let template_escape = just('\\').ignore_then(choice((
+        just('\\'),
+        just('`'),
+        just('$'),
+        just('n').to('\n'),
+        just('r').to('\r'),
+        just('t').to('\t'),
+    )));
+
+    // Helper to parse expression content inside ${...} tracking nested braces
+    let expr_content = recursive(|nested| {
+        choice((
+            none_of("{}\"'`").map(|c: char| c.to_string()),
+            just('{').ignore_then(nested.clone()).then_ignore(just('}')).map(|s| format!("{{{}}}", s)),
+            just('"').ignore_then(
+                choice((
+                    just("\\\"").to('"'),
+                    just("\\\\").to('\\'),
+                    just("\\n").to('\n'),
+                    just("\\t").to('\t'),
+                    none_of("\\\""),
+                )).repeated().collect::<String>()
+            ).then_ignore(just('"')).map(|s| format!("\"{}\"", s)),
+            just('\'').ignore_then(none_of("'").repeated().collect::<String>()).then_ignore(just('\'')).map(|s| format!("'{}'", s)),
+        ))
+        .repeated()
+        .collect::<Vec<String>>()
+        .map(|v| v.join(""))
+    });
+
+    // Template chunk - either a character or an interpolation expression
+    #[derive(Clone)]
+    enum TemplateChunk {
+        Char(char),
+        Expr(String),
+    }
+
+    // Template literal parser - handles `...${...}...`
+    let template_literal = just('`').ignore_then(
+        choice((
+            // Interpolation: ${expr}
+            just("${").ignore_then(expr_content).then_ignore(just('}')).map(TemplateChunk::Expr),
+            // Escaped characters
+            template_escape.map(TemplateChunk::Char),
+            // Regular characters (not `, \, or $)
+            none_of("\\`$").map(TemplateChunk::Char),
+            // $ not followed by { is literal $
+            just('$').then_ignore(none_of("{").rewind()).map(|_| TemplateChunk::Char('$')),
+            // $ at end of string before `
+            just('$').then_ignore(just('`').rewind()).map(|_| TemplateChunk::Char('$')),
+        ))
+        .repeated()
+        .collect::<Vec<TemplateChunk>>()
+    ).then_ignore(just('`'))
+    .map(|chunks: Vec<TemplateChunk>| {
+        // Build encoded string from chunks
+        let mut parts: Vec<(bool, String)> = Vec::new(); // (is_expr, content)
+        let mut current_text = String::new();
+        
+        for chunk in chunks {
+            match chunk {
+                TemplateChunk::Char(c) => current_text.push(c),
+                TemplateChunk::Expr(expr) => {
+                    if !current_text.is_empty() {
+                        parts.push((false, std::mem::take(&mut current_text)));
+                    }
+                    parts.push((true, expr));
+                }
+            }
+        }
+        if !current_text.is_empty() {
+            parts.push((false, current_text));
+        }
+        
+        // Check if there are any interpolations
+        let has_exprs = parts.iter().any(|(is_expr, _)| *is_expr);
+        
+        if !has_exprs {
+            // Simple template literal
+            let text = parts.into_iter().map(|(_, s)| s).collect::<String>();
+            Token::TemplateFull(text)
+        } else {
+            // Template with interpolations - encode for parser
+            // Format: TPL:TEXT:...\x00EXPR:...\x00TEXT:...
+            let mut encoded = String::from("TPL:");
+            for (i, (is_expr, content)) in parts.iter().enumerate() {
+                if i > 0 {
+                    encoded.push('\x00');
+                }
+                if *is_expr {
+                    encoded.push_str("EXPR:");
+                } else {
+                    encoded.push_str("TEXT:");
+                }
+                encoded.push_str(content);
+            }
+            Token::TemplateFull(encoded)
+        }
+    });
 
     let ident = text::ident().map(|s: &str| match s {
         "let" => Token::Let,
@@ -298,6 +425,8 @@ pub fn lexer<'a>()
         just("..").to(Token::DotDot),
         just("=>").to(Token::Arrow),
         just("?.").to(Token::QuestionDot),
+        just("??").to(Token::NullCoalesce),
+        just('?').to(Token::Question),
     ));
 
     let op_single = choice((
@@ -328,6 +457,7 @@ pub fn lexer<'a>()
 
     let token = number
         .or(string)
+        .or(template_literal)
         .or(ident)
         .or(op)
         .map_with(|tok, e| (tok, e.span()))

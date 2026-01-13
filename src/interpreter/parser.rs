@@ -1,5 +1,6 @@
 use crate::diagnostic::{Diagnostic, Label, Span};
 use crate::lexer::{BinaryOp, Expr, ExprKind, Stmt, Token, UnaryOp, Value};
+use chumsky::Parser as _;
 use std::rc::Rc;
 
 /// A token with its source span
@@ -493,14 +494,55 @@ impl TokenParser {
     }
 
     fn parse_pipe(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_logical_or()?;
+        let mut left = self.parse_ternary()?;
 
         while matches!(self.current_token(), Some(Token::Pipe)) {
+            self.advance();
+            let right = self.parse_ternary()?;
+            let span = left.span.merge(right.span);
+            left = Expr {
+                kind: ExprKind::Pipe {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span,
+            };
+        }
+
+        Ok(left)
+    }
+
+    fn parse_ternary(&mut self) -> Result<Expr, ParseError> {
+        let condition = self.parse_null_coalesce()?;
+
+        if matches!(self.current_token(), Some(Token::Question)) {
+            self.advance();
+            let then_branch = self.parse_ternary()?;
+            self.expect(Token::Colon)?;
+            let else_branch = self.parse_ternary()?;
+            let span = condition.span.merge(else_branch.span);
+            return Ok(Expr {
+                kind: ExprKind::Ternary {
+                    condition: Box::new(condition),
+                    then_branch: Box::new(then_branch),
+                    else_branch: Box::new(else_branch),
+                },
+                span,
+            });
+        }
+
+        Ok(condition)
+    }
+
+    fn parse_null_coalesce(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_logical_or()?;
+
+        while matches!(self.current_token(), Some(Token::NullCoalesce)) {
             self.advance();
             let right = self.parse_logical_or()?;
             let span = left.span.merge(right.span);
             left = Expr {
-                kind: ExprKind::Pipe {
+                kind: ExprKind::NullCoalesce {
                     left: Box::new(left),
                     right: Box::new(right),
                 },
@@ -547,6 +589,7 @@ impl TokenParser {
                 span,
             };
         }
+
 
         Ok(left)
     }
@@ -797,6 +840,64 @@ impl TokenParser {
         Ok(expr)
     }
 
+    fn parse_template_literal(&mut self, encoded: String, span: Span) -> Result<Expr, ParseError> {
+        use crate::lexer::TemplatePart;
+        
+        // Check if it's a simple template (no interpolations)
+        if !encoded.starts_with("TPL:") {
+            // Simple template literal - just a string
+            return Ok(Expr {
+                kind: ExprKind::TemplateLiteral {
+                    parts: vec![TemplatePart::Literal(encoded)],
+                },
+                span,
+            });
+        }
+
+        // Parse encoded template: TPL:TEXT:...\x00EXPR:...\x00TEXT:...
+        let content = &encoded[4..]; // Skip "TPL:"
+        let segments: Vec<&str> = content.split('\x00').collect();
+        
+        let mut parts = Vec::new();
+        
+        for segment in segments {
+            if let Some(text) = segment.strip_prefix("TEXT:") {
+                // Text segment
+                if !text.is_empty() {
+                    parts.push(TemplatePart::Literal(text.to_string()));
+                }
+            } else if let Some(expr_source) = segment.strip_prefix("EXPR:") {
+                // Expression segment - need to parse it
+                if !expr_source.is_empty() {
+                    // Tokenize and parse the expression
+                    let tokens = crate::lexer::lexer()
+                        .parse(expr_source)
+                        .into_output()
+                        .ok_or_else(|| ParseError::new(
+                            format!("failed to tokenize interpolation: {}", expr_source),
+                            span,
+                        ))?;
+                    
+                    let mut sub_parser = TokenParser::from_lexer_output(tokens, expr_source.len());
+                    let expr = sub_parser.parse_expression().map_err(|e| {
+                        ParseError::new(
+                            format!("error in interpolation '{}': {}", expr_source, e.message),
+                            span,
+                        )
+                    })?;
+                    
+                    parts.push(TemplatePart::Interpolation(Box::new(expr)));
+                }
+            }
+        }
+
+        // If we end up with a single literal part, still wrap it
+        Ok(Expr {
+            kind: ExprKind::TemplateLiteral { parts },
+            span,
+        })
+    }
+
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         let st = self.advance();
         let (token, span) = match st {
@@ -819,6 +920,9 @@ impl TokenParser {
                 kind: ExprKind::Literal(Value::String(Rc::from(s.as_str()))),
                 span,
             }),
+            Token::TemplateFull(s) => {
+                self.parse_template_literal(s, span)
+            },
             Token::True => Ok(Expr {
                 kind: ExprKind::Literal(Value::Bool(true)),
                 span,
