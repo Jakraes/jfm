@@ -251,7 +251,8 @@ fn test_file_and_stdin_conflict() {
         .expect("Failed to spawn jfm");
     
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(b"{\"stdin\":\"ignored\"}").unwrap();
+        // Ignore broken pipe error - process may exit early due to argument conflict
+        let _ = stdin.write_all(b"{\"stdin\":\"ignored\"}");
     }
     
     let output = child.wait_with_output().expect("Failed to read output");
