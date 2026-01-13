@@ -52,6 +52,8 @@ Options:
       --color <WHEN>         Control colored output [default: auto] [possible values: auto, always, never]
       --compact              Output minified JSON (no pretty-print)
   -v, --verbose              Enable verbose/debug mode
+  -n, --limit <N>            Limit output to N results (for array outputs)
+      --stream               Enable streaming mode for large JSON files
   -h, --help                 Print help
 
 Commands:
@@ -67,6 +69,8 @@ Commands:
   - `never`: Disable colors
 - `--compact`: Output JSON in compact/minified format (single line, no indentation)
 - `-v, --verbose`: Enable verbose/debug mode. Debug messages are printed to stderr and do not interfere with JSON output
+- `-n, --limit <N>`: Limit the number of results in array outputs. When specified, only the first N elements of array results are returned
+- `--stream`: Enable streaming mode for processing large JSON files. Supports both JSON arrays and newline-delimited JSON (NDJSON) format
 
 ### Interactive Mode
 
@@ -200,6 +204,42 @@ jfm --color never --file data.json --query "invalid.query"
 jfm --version
 # or
 jfm -V
+```
+
+**Limiting output results:**
+
+```bash
+# Get only the first 3 users from an array
+jfm --file data.json --query "root.users" --limit 3
+
+# Short form
+jfm --file data.json --query "root.users" -n 5
+
+# Limit combined with filtering
+jfm '{"items": [1,2,3,4,5,6,7,8,9,10]}' --query "root.items | . > 3" --limit 2
+# Output: [4, 5]
+```
+
+**Streaming mode for large files:**
+
+Streaming mode is useful for processing large JSON files efficiently without loading everything into memory at once. It supports both JSON arrays and newline-delimited JSON (NDJSON).
+
+```bash
+# Process a large JSON array - each element is processed individually
+jfm --stream --query "root.name" --file large_array.json
+
+# Process NDJSON (newline-delimited JSON) - one JSON object per line
+cat logs.ndjson | jfm --stream --query "root.level"
+
+# Combine streaming with limit to get first N results quickly
+jfm --stream --limit 10 --query "root.id" --file huge_dataset.json
+```
+
+NDJSON format example (each line is a separate JSON object):
+```json
+{"id": 1, "name": "Alice"}
+{"id": 2, "name": "Bob"}
+{"id": 3, "name": "Charlie"}
 ```
 
 **Shell Completions:**

@@ -36,6 +36,14 @@ struct Args {
     #[arg(short = 'v', long = "verbose")]
     verbose: bool,
 
+    /// Limit output to N results (for array outputs)
+    #[arg(short = 'n', long = "limit", value_name = "N")]
+    limit: Option<usize>,
+
+    /// Enable streaming mode for large JSON files (processes line-delimited JSON or large arrays)
+    #[arg(long = "stream")]
+    stream: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -72,6 +80,8 @@ struct AppConfig {
     color_enabled: bool,
     compact: bool,
     verbose: bool,
+    limit: Option<usize>,
+    stream: bool,
 }
 
 impl AppConfig {
@@ -86,6 +96,8 @@ impl AppConfig {
             color_enabled,
             compact: args.compact,
             verbose: args.verbose,
+            limit: args.limit,
+            stream: args.stream,
         }
     }
 }
@@ -111,6 +123,27 @@ fn main() {
     };
 
     verbose_log(&config, &format!("Read {} bytes of JSON input", json_str.len()));
+
+    // Handle streaming mode
+    if config.stream {
+        verbose_log(&config, "Streaming mode enabled");
+        
+        if args.query.is_none() && args.query_file.is_none() {
+            error_message(&config, "Streaming mode requires a query (--query or --query-file)");
+            std::process::exit(1);
+        }
+        
+        let query_str = match read_query_input(&args, &config) {
+            Ok(s) => s,
+            Err(e) => {
+                error_message(&config, &e);
+                std::process::exit(1);
+            }
+        };
+        
+        execute_streaming(&json_str, &query_str, &args.out, &config);
+        return;
+    }
 
     let root_value = match json::parse_json(&json_str) {
         Ok(val) => {
@@ -223,7 +256,9 @@ fn execute_query(query_str: &str, root_value: &jfm::lexer::Value, out_file: &Opt
     let result = match interpreter::parse_and_run(query_str, root_value.clone()) {
         Ok(Some(result)) => {
             verbose_log(config, "Query executed successfully");
-            format!("{}\n", value_to_json_string(&result, config.compact))
+            // Apply limit if specified and result is an array
+            let limited_result = apply_limit(&result, config.limit);
+            format!("{}\n", value_to_json_string(&limited_result, config.compact))
         }
         Ok(None) => {
             verbose_log(config, "Query returned None, outputting empty object");
@@ -272,6 +307,159 @@ fn execute_query(query_str: &str, root_value: &jfm::lexer::Value, out_file: &Opt
             }
         }
     }
+}
+
+/// Apply limit to array results, returning only the first N elements
+fn apply_limit(value: &jfm::lexer::Value, limit: Option<usize>) -> jfm::lexer::Value {
+    use jfm::lexer::Value;
+    
+    match (value, limit) {
+        (Value::Array(arr), Some(n)) => {
+            let items = arr.borrow();
+            let limited: Vec<Value> = items.iter().take(n).cloned().collect();
+            Value::Array(std::rc::Rc::new(RefCell::new(limited)))
+        }
+        _ => value.clone(),
+    }
+}
+
+/// Execute query in streaming mode - processes line-delimited JSON (NDJSON) or large JSON arrays
+fn execute_streaming(json_str: &str, query_str: &str, out_file: &Option<PathBuf>, config: &AppConfig) {
+    use std::fs::OpenOptions;
+    
+    let mut output_count = 0usize;
+    let limit = config.limit.unwrap_or(usize::MAX);
+    
+    // Try to detect if it's NDJSON (newline-delimited JSON)
+    let is_ndjson = json_str.lines().next().is_some_and(|first_line| {
+        let trimmed = first_line.trim();
+        !trimmed.is_empty() && !trimmed.starts_with('[')
+    });
+    
+    let mut out_writer: Option<std::fs::File> = if let Some(out_path) = out_file {
+        match OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(out_path)
+        {
+            Ok(f) => Some(f),
+            Err(e) => {
+                error_message(config, &format!("Error opening output file: {}", e));
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+    
+    if is_ndjson {
+        verbose_log(config, "Processing as NDJSON (newline-delimited JSON)");
+        
+        for line in json_str.lines() {
+            if output_count >= limit {
+                verbose_log(config, &format!("Reached limit of {} results", limit));
+                break;
+            }
+            
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            
+            match json::parse_json(trimmed) {
+                Ok(json_val) => {
+                    let root_value = convert_json_to_internal(json_val);
+                    match interpreter::parse_and_run(query_str, root_value) {
+                        Ok(Some(result)) => {
+                            let output = format!("{}\n", value_to_json_string(&result, config.compact));
+                            
+                            if let Some(ref mut writer) = out_writer {
+                                let _ = writer.write_all(output.as_bytes());
+                            } else {
+                                print!("{}", output);
+                            }
+                            output_count += 1;
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            error_message(config, &format!("Query error on line: {}", e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    error_message(config, &format!("JSON parse error on line: {}", e));
+                }
+            }
+        }
+    } else {
+        verbose_log(config, "Processing as JSON array stream");
+        
+        // Parse as a single JSON and iterate if it's an array
+        match json::parse_json(json_str) {
+            Ok(serde_json::Value::Array(arr)) => {
+                for item in arr {
+                    if output_count >= limit {
+                        verbose_log(config, &format!("Reached limit of {} results", limit));
+                        break;
+                    }
+                    
+                    let root_value = convert_json_to_internal(item);
+                    match interpreter::parse_and_run(query_str, root_value) {
+                        Ok(Some(result)) => {
+                            let output = format!("{}\n", value_to_json_string(&result, config.compact));
+                            
+                            if let Some(ref mut writer) = out_writer {
+                                let _ = writer.write_all(output.as_bytes());
+                            } else {
+                                print!("{}", output);
+                            }
+                            output_count += 1;
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            error_message(config, &format!("Query error on item: {}", e));
+                        }
+                    }
+                }
+            }
+            Ok(json_val) => {
+                // Not an array, process as single item
+                let root_value = convert_json_to_internal(json_val);
+                match interpreter::parse_and_run(query_str, root_value) {
+                    Ok(Some(result)) => {
+                        let limited_result = apply_limit(&result, config.limit);
+                        let output = format!("{}\n", value_to_json_string(&limited_result, config.compact));
+                        
+                        if let Some(ref mut writer) = out_writer {
+                            let _ = writer.write_all(output.as_bytes());
+                        } else {
+                            print!("{}", output);
+                        }
+                    }
+                    Ok(None) => {
+                        let output = "{}\n";
+                        if let Some(ref mut writer) = out_writer {
+                            let _ = writer.write_all(output.as_bytes());
+                        } else {
+                            print!("{}", output);
+                        }
+                    }
+                    Err(e) => {
+                        error_message(config, &format!("Query error: {}", e));
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Err(e) => {
+                error_message(config, &format!("JSON parse error: {}", e));
+                std::process::exit(1);
+            }
+        }
+    }
+    
+    verbose_log(config, &format!("Streaming complete. Processed {} results", output_count));
+    io::stdout().flush().unwrap();
 }
 
 fn generate_completions(shell: Shell) {

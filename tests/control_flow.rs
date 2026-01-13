@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use indexmap::IndexMap;
 
+#[allow(dead_code)]
 fn make_test_root() -> Value {
     let mut root = IndexMap::new();
     let mut users = Vec::new();
