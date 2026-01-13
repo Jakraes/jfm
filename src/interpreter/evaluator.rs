@@ -301,11 +301,11 @@ impl Interpreter {
                 let s = self.eval_expr(start)?;
                 let e = self.eval_expr(end)?;
                 match (s, e) {
-                    (Value::Number(start_n), Value::Number(end_n)) => {
+                    (Value::Number(start_n, _), Value::Number(end_n, _)) => {
                         let mut vals = Vec::new();
                         let mut i = start_n;
                         while i <= end_n {
-                            vals.push(Value::Number(i));
+                            vals.push(Value::Number(i, false));  // Range produces integers
                             i += 1.0;
                         }
                         Ok(Value::Array(Rc::new(RefCell::new(vals))))
@@ -338,7 +338,7 @@ impl Interpreter {
                 let arr_val = self.eval_expr(array)?;
                 let idx_val = self.eval_expr(index)?;
                 let idx = match idx_val {
-                    Value::Number(n) => n as usize,
+                    Value::Number(n, _) => n as usize,
                     _ => return Err(InterpreterError::TypeError("Index must be a number".to_string())),
                 };
 
@@ -557,7 +557,7 @@ impl Interpreter {
                 .unwrap_or(Value::Null)),
             Value::Array(items) => {
                 if field == "length" {
-                    Ok(Value::Number(items.borrow().len() as f64))
+                    Ok(Value::Number(items.borrow().len() as f64, false))
                 } else {
                     Ok(Value::Null)
                 }
@@ -580,7 +580,7 @@ impl Interpreter {
 
     fn get_index(&self, arr: &Value, idx: &Value) -> Result<Value, InterpreterError> {
         match (arr, idx) {
-            (Value::Array(items), Value::Number(n)) => {
+            (Value::Array(items), Value::Number(n, _)) => {
                 let index = *n as usize;
                 items
                     .borrow()
@@ -601,18 +601,18 @@ impl Interpreter {
         right: &Value,
     ) -> Result<Value, InterpreterError> {
         match (left, op, right) {
-            (Value::Number(a), BinaryOp::Add, Value::Number(b)) => Ok(Value::Number(a + b)),
-            (Value::Number(a), BinaryOp::Sub, Value::Number(b)) => Ok(Value::Number(a - b)),
-            (Value::Number(a), BinaryOp::Mul, Value::Number(b)) => Ok(Value::Number(a * b)),
-            (Value::Number(a), BinaryOp::Div, Value::Number(b)) => {
+            (Value::Number(a, af), BinaryOp::Add, Value::Number(b, bf)) => Ok(Value::Number(a + b, *af || *bf)),
+            (Value::Number(a, af), BinaryOp::Sub, Value::Number(b, bf)) => Ok(Value::Number(a - b, *af || *bf)),
+            (Value::Number(a, af), BinaryOp::Mul, Value::Number(b, bf)) => Ok(Value::Number(a * b, *af || *bf)),
+            (Value::Number(a, _), BinaryOp::Div, Value::Number(b, _)) => {
                 if *b == 0.0 {
                     Err(InterpreterError::DivisionByZero)
                 } else {
-                    Ok(Value::Number(a / b))
+                    Ok(Value::Number(a / b, true))  // Division always produces float
                 }
             }
-            (Value::Number(a), BinaryOp::Mod, Value::Number(b)) => Ok(Value::Number(a % b)),
-            (Value::Number(a), BinaryOp::Pow, Value::Number(b)) => Ok(Value::Number(a.powf(*b))),
+            (Value::Number(a, af), BinaryOp::Mod, Value::Number(b, bf)) => Ok(Value::Number(a % b, *af || *bf)),
+            (Value::Number(a, _), BinaryOp::Pow, Value::Number(b, _)) => Ok(Value::Number(a.powf(*b), true)),  // Power always produces float
             (Value::String(a), BinaryOp::Add, Value::String(b)) => {
                 let mut combined = String::with_capacity(a.len() + b.len());
                 combined.push_str(a);
@@ -631,10 +631,10 @@ impl Interpreter {
             }
             (a, BinaryOp::Eq, b) => Ok(Value::Bool(self.values_equal(a, b))),
             (a, BinaryOp::NotEq, b) => Ok(Value::Bool(!self.values_equal(a, b))),
-            (Value::Number(a), BinaryOp::Greater, Value::Number(b)) => Ok(Value::Bool(a > b)),
-            (Value::Number(a), BinaryOp::Less, Value::Number(b)) => Ok(Value::Bool(a < b)),
-            (Value::Number(a), BinaryOp::GreaterEq, Value::Number(b)) => Ok(Value::Bool(a >= b)),
-            (Value::Number(a), BinaryOp::LessEq, Value::Number(b)) => Ok(Value::Bool(a <= b)),
+            (Value::Number(a, _), BinaryOp::Greater, Value::Number(b, _)) => Ok(Value::Bool(a > b)),
+            (Value::Number(a, _), BinaryOp::Less, Value::Number(b, _)) => Ok(Value::Bool(a < b)),
+            (Value::Number(a, _), BinaryOp::GreaterEq, Value::Number(b, _)) => Ok(Value::Bool(a >= b)),
+            (Value::Number(a, _), BinaryOp::LessEq, Value::Number(b, _)) => Ok(Value::Bool(a <= b)),
             (Value::Bool(a), BinaryOp::And, Value::Bool(b)) => Ok(Value::Bool(*a && *b)),
             (Value::Bool(a), BinaryOp::Or, Value::Bool(b)) => Ok(Value::Bool(*a || *b)),
             _ => Err(InterpreterError::InvalidOperation(format!(
@@ -647,7 +647,7 @@ impl Interpreter {
     fn eval_unary_op(&mut self, op: &UnaryOp, val: &Value) -> Result<Value, InterpreterError> {
         match (op, val) {
             (UnaryOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
-            (UnaryOp::Neg, Value::Number(n)) => Ok(Value::Number(-n)),
+            (UnaryOp::Neg, Value::Number(n, is_float)) => Ok(Value::Number(-n, *is_float)),
             _ => Err(InterpreterError::InvalidOperation(format!(
                 "Cannot apply {:?} to {:?}",
                 op, val
@@ -659,7 +659,7 @@ impl Interpreter {
         match (a, b) {
             (Value::Null, Value::Null) => true,
             (Value::Bool(a), Value::Bool(b)) => a == b,
-            (Value::Number(a), Value::Number(b)) => a == b,
+            (Value::Number(a, _), Value::Number(b, _)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             _ => false,
         }
@@ -669,7 +669,7 @@ impl Interpreter {
         match (a, b) {
             (Value::Null, Value::Null) => true,
             (Value::Bool(a), Value::Bool(b)) => a == b,
-            (Value::Number(a), Value::Number(b)) => a.to_bits() == b.to_bits(),
+            (Value::Number(a, _), Value::Number(b, _)) => a.to_bits() == b.to_bits(),
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Array(arr_a), Value::Array(arr_b)) => {
                 let arr_a_ref = arr_a.borrow();
@@ -704,11 +704,11 @@ impl Interpreter {
         match val {
             Value::Null => "null".to_string(),
             Value::Bool(b) => b.to_string(),
-            Value::Number(n) => {
-                if n.fract() == 0.0 && n.abs() < 1e15 {
-                    format!("{:.0}", n)
-                } else {
+            Value::Number(n, is_float) => {
+                if *is_float || n.fract() != 0.0 {
                     n.to_string()
+                } else {
+                    format!("{:.0}", n)
                 }
             }
             Value::String(s) => s.to_string(),
@@ -768,17 +768,17 @@ mod tests {
 
         let mut user1 = IndexMap::new();
         user1.insert("name".to_string(), Value::String(Rc::from("Bob")));
-        user1.insert("age".to_string(), Value::Number(30.0));
+        user1.insert("age".to_string(), Value::Number(30.0, false));
         users.push(Value::Object(Rc::new(RefCell::new(user1))));
 
         let mut user2 = IndexMap::new();
         user2.insert("name".to_string(), Value::String(Rc::from("Alice")));
-        user2.insert("age".to_string(), Value::Number(25.0));
+        user2.insert("age".to_string(), Value::Number(25.0, false));
         users.push(Value::Object(Rc::new(RefCell::new(user2))));
 
         let mut user3 = IndexMap::new();
         user3.insert("name".to_string(), Value::String(Rc::from("Bob")));
-        user3.insert("age".to_string(), Value::Number(35.0));
+        user3.insert("age".to_string(), Value::Number(35.0, false));
         users.push(Value::Object(Rc::new(RefCell::new(user3))));
 
         root_obj.insert("users".to_string(), Value::Array(Rc::new(RefCell::new(users))));
@@ -805,7 +805,7 @@ mod tests {
     fn test_expression_returns_value() {
         let source = "5 + 3;";
         let result = parse_and_run(source, Value::Null).unwrap();
-        assert_eq!(result, Some(Value::Number(8.0)));
+        assert_eq!(result, Some(Value::Number(8.0, false)));
     }
 
     #[test]
@@ -820,7 +820,7 @@ mod tests {
     fn test_arithmetic() {
         let source = "10 + 5 * 2;";
         let result = parse_and_run(source, Value::Null).unwrap();
-        assert_eq!(result, Some(Value::Number(20.0)));
+        assert_eq!(result, Some(Value::Number(20.0, false)));
     }
 
     #[test]
@@ -897,21 +897,21 @@ mod tests {
         let source = "count(root.users);";
         let root = make_test_root();
         let result = parse_and_run(source, root).unwrap();
-        assert_eq!(result, Some(Value::Number(3.0)));
+        assert_eq!(result, Some(Value::Number(3.0, false)));
     }
 
     #[test]
     fn test_sum_function() {
         let source = "sum([1, 2, 3, 4, 5]);";
         let result = parse_and_run(source, Value::Null).unwrap();
-        assert_eq!(result, Some(Value::Number(15.0)));
+        assert_eq!(result, Some(Value::Number(15.0, false)));
     }
 
     #[test]
     fn test_avg_function() {
         let source = "avg([10, 20, 30]);";
         let result = parse_and_run(source, Value::Null).unwrap();
-        assert_eq!(result, Some(Value::Number(20.0)));
+        assert_eq!(result, Some(Value::Number(20.0, true)));
     }
 }
 

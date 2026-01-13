@@ -585,8 +585,8 @@ impl TokenParser {
         let span = SimpleSpan::new((), 0..0);
 
         match self.advance() {
-            Some(Token::Number(n)) => Ok(Expr {
-                kind: ExprKind::Literal(Value::Number(n)),
+            Some(Token::Number(n, is_float)) => Ok(Expr {
+                kind: ExprKind::Literal(Value::Number(n, is_float)),
                 span,
             }),
             Some(Token::String(s)) => Ok(Expr {

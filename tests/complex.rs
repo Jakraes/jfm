@@ -17,11 +17,11 @@ fn make_complex_root() -> Value {
 
     for (id, name, age, active, prb) in data {
         let mut u = IndexMap::new();
-        u.insert("id".to_string(), Value::Number(id as f64));
+        u.insert("id".to_string(), Value::Number(id as f64, false));
         u.insert("name".to_string(), Value::String(Rc::from(name)));
-        u.insert("age".to_string(), Value::Number(age as f64));
+        u.insert("age".to_string(), Value::Number(age as f64, false));
         u.insert("active".to_string(), Value::Bool(active));
-        u.insert("prb".to_string(), Value::Number(prb as f64));
+        u.insert("prb".to_string(), Value::Number(prb as f64, false));
         users.push(Value::Object(Rc::new(RefCell::new(u))));
     }
     root_obj.insert("users".to_string(), Value::Array(Rc::new(RefCell::new(users))));
@@ -34,7 +34,7 @@ fn make_complex_root() -> Value {
     for (id, salary) in emp_data {
         let mut e = IndexMap::new();
         e.insert("id".to_string(), Value::String(Rc::from(id)));
-        e.insert("salary".to_string(), Value::Number(salary));
+        e.insert("salary".to_string(), Value::Number(salary, false));
         employees.push(Value::Object(Rc::new(RefCell::new(e))));
     }
     root_obj.insert("employees".to_string(), Value::Array(Rc::new(RefCell::new(employees))));
@@ -128,7 +128,7 @@ fn test_deep_nesting_and_shadowing() {
     "#;
     let root = Value::Null;
     let result = parse_and_run(source, root).unwrap();
-    assert_eq!(result, Some(Value::Number(1.0)));
+    assert_eq!(result, Some(Value::Number(1.0, false)));
 }
 
 #[test]
@@ -138,8 +138,8 @@ fn test_large_range_array() {
     let result = parse_and_run(source, root).unwrap().unwrap();
     let arr = result.as_array().unwrap();
     assert_eq!(arr.len(), 200);
-    assert_eq!(arr[0], Value::Number(0.0));
-    assert_eq!(arr[199], Value::Number(199.0));
+    assert_eq!(arr[0], Value::Number(0.0, false));
+    assert_eq!(arr[199], Value::Number(199.0, false));
 }
 
 #[test]

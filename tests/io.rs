@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 fn make_test_root() -> Value {
     let mut root_obj = IndexMap::new();
     root_obj.insert("name".to_string(), Value::String(Rc::from("Alice")));
-    root_obj.insert("age".to_string(), Value::Number(30.0));
+    root_obj.insert("age".to_string(), Value::Number(30.0, false));
     root_obj.insert("active".to_string(), Value::Bool(true));
     Value::Object(Rc::new(RefCell::new(root_obj)))
 }

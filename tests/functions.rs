@@ -8,12 +8,12 @@ use indexmap::IndexMap;
 
 fn make_test_array() -> Value {
     let arr = vec![
-        Value::Number(5.0),
-        Value::Number(3.0),
-        Value::Number(8.0),
-        Value::Number(1.0),
-        Value::Number(9.0),
-        Value::Number(2.0),
+        Value::Number(5.0, false),
+        Value::Number(3.0, false),
+        Value::Number(8.0, false),
+        Value::Number(1.0, false),
+        Value::Number(9.0, false),
+        Value::Number(2.0, false),
     ];
     let mut root = IndexMap::new();
     root.insert("numbers".to_string(), Value::Array(Rc::new(RefCell::new(arr))));
@@ -33,7 +33,7 @@ fn make_user_array() -> Value {
     ] {
         let mut user = IndexMap::new();
         user.insert("name".to_string(), Value::String(Rc::from(name)));
-        user.insert("age".to_string(), Value::Number(age as f64));
+        user.insert("age".to_string(), Value::Number(age as f64, false));
         user.insert("department".to_string(), Value::String(Rc::from(dept)));
         users.push(Value::Object(Rc::new(RefCell::new(user))));
     }
@@ -889,7 +889,7 @@ fn test_len_basic() {
 fn make_test_object() -> Value {
     let mut obj = IndexMap::new();
     obj.insert("name".to_string(), Value::String(Rc::from("Alice")));
-    obj.insert("age".to_string(), Value::Number(30.0));
+    obj.insert("age".to_string(), Value::Number(30.0, false));
     obj.insert("active".to_string(), Value::Bool(true));
     Value::Object(Rc::new(RefCell::new(obj)))
 }

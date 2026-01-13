@@ -14,10 +14,10 @@ fn make_large_dataset(n: usize) -> Value {
     
     for i in 0..n {
         let mut user = IndexMap::new();
-        user.insert("id".to_string(), Value::Number(i as f64));
+        user.insert("id".to_string(), Value::Number(i as f64, false));
         user.insert("name".to_string(), Value::String(Rc::from(format!("User{}", i))));
-        user.insert("age".to_string(), Value::Number((20 + (i % 50)) as f64));
-        user.insert("score".to_string(), Value::Number((i * 17 % 100) as f64));
+        user.insert("age".to_string(), Value::Number((20 + (i % 50)) as f64, false));
+        user.insert("score".to_string(), Value::Number((i * 17 % 100) as f64, false));
         user.insert("active".to_string(), Value::Bool(i % 2 == 0));
         user.insert("department".to_string(), Value::String(Rc::from(format!("Dept{}", i % 10))));
         users.push(Value::Object(Rc::new(RefCell::new(user))));
@@ -29,11 +29,11 @@ fn make_large_dataset(n: usize) -> Value {
 
 /// Create deeply nested object structure
 fn make_deeply_nested(depth: usize) -> Value {
-    let mut current = Value::Number(42.0);
+    let mut current = Value::Number(42.0, false);
     for i in (0..depth).rev() {
         let mut obj = IndexMap::new();
         obj.insert(format!("level{}", i), current);
-        obj.insert("depth".to_string(), Value::Number(i as f64));
+        obj.insert("depth".to_string(), Value::Number(i as f64, false));
         current = Value::Object(Rc::new(RefCell::new(obj)));
     }
     let mut root = IndexMap::new();

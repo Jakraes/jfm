@@ -12,7 +12,7 @@ fn make_test_root() -> Value {
     for (name, age) in [("Alice", 25.0), ("Bob", 30.0), ("Charlie", 35.0)] {
         let mut user = IndexMap::new();
         user.insert("name".to_string(), Value::String(Rc::from(name)));
-        user.insert("age".to_string(), Value::Number(age));
+        user.insert("age".to_string(), Value::Number(age, false));
         users.push(Value::Object(Rc::new(RefCell::new(user))));
     }
     
@@ -30,7 +30,7 @@ fn test_while_loop_basic() {
         x;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(5.0)));
+    assert_eq!(result, Some(Value::Number(5.0, false)));
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn test_while_loop_condition_false() {
         x;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(10.0)));
+    assert_eq!(result, Some(Value::Number(10.0, false)));
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn test_while_loop_with_array() {
         sum;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(15.0)));
+    assert_eq!(result, Some(Value::Number(15.0, false)));
 }
 
 #[test]
@@ -75,7 +75,7 @@ fn test_break_in_while_loop() {
         x;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(5.0)));
+    assert_eq!(result, Some(Value::Number(5.0, false)));
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn test_continue_in_while_loop() {
         sum;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(25.0)));
+    assert_eq!(result, Some(Value::Number(25.0, false)));
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn test_break_in_for_loop() {
         sum;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(15.0)));
+    assert_eq!(result, Some(Value::Number(15.0, false)));
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn test_continue_in_for_loop() {
         sum;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(25.0)));
+    assert_eq!(result, Some(Value::Number(25.0, false)));
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn test_nested_loops_with_break() {
         inner;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(2.0)));
+    assert_eq!(result, Some(Value::Number(2.0, false)));
 }
 
 #[test]
@@ -156,7 +156,7 @@ fn test_lambda_single_parameter() {
         f(5);
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(6.0)));
+    assert_eq!(result, Some(Value::Number(6.0, false)));
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn test_lambda_multiple_parameters() {
         add(3, 4);
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(7.0)));
+    assert_eq!(result, Some(Value::Number(7.0, false)));
 }
 
 #[test]
@@ -176,7 +176,7 @@ fn test_lambda_no_parameters() {
         get_five();
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(5.0)));
+    assert_eq!(result, Some(Value::Number(5.0, false)));
 }
 
 #[test]
@@ -186,7 +186,7 @@ fn test_lambda_assigned_and_called() {
         double(10);
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(20.0)));
+    assert_eq!(result, Some(Value::Number(20.0, false)));
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn test_user_defined_function() {
         add(5, 3);
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(8.0)));
+    assert_eq!(result, Some(Value::Number(8.0, false)));
 }
 
 #[test]
@@ -211,7 +211,7 @@ fn test_user_defined_function_no_return() {
         get_ten();
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(10.0)));
+    assert_eq!(result, Some(Value::Number(10.0, false)));
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn test_user_defined_function_multiple_statements() {
         multiply(4, 7);
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(28.0)));
+    assert_eq!(result, Some(Value::Number(28.0, false)));
 }
 
 #[test]
@@ -240,7 +240,7 @@ fn test_function_with_conditional() {
         max(5, 10);
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(10.0)));
+    assert_eq!(result, Some(Value::Number(10.0, false)));
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn test_function_recursion() {
         factorial(5);
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(120.0)));
+    assert_eq!(result, Some(Value::Number(120.0, false)));
 }
 
 #[test]
@@ -267,7 +267,7 @@ fn test_lambda_captures_outer_scope() {
         f(5);
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(15.0)));
+    assert_eq!(result, Some(Value::Number(15.0, false)));
 }
 
 #[test]
@@ -282,5 +282,5 @@ fn test_function_calls_function() {
         quadruple(5);
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(20.0)));
+    assert_eq!(result, Some(Value::Number(20.0, false)));
 }

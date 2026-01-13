@@ -8,8 +8,8 @@ fn test_negative_range() {
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     let arr = result.as_array().unwrap();
     assert_eq!(arr.len(), 4);
-    assert_eq!(arr[0], Value::Number(-3.0));
-    assert_eq!(arr[3], Value::Number(0.0));
+    assert_eq!(arr[0], Value::Number(-3.0, false));
+    assert_eq!(arr[3], Value::Number(0.0, false));
 }
 
 #[test]
@@ -52,6 +52,6 @@ fn test_optional_chaining_deep_null() {
 fn test_large_number_overflow_to_infinity() {
     let source = "let arr = 0..999; arr.length;";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    assert_eq!(result, Value::Number(1000.0));
+    assert_eq!(result, Value::Number(1000.0, false));
 }
 

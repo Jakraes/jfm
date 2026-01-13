@@ -6,8 +6,8 @@ use indexmap::IndexMap;
 
 fn make_simple_data() -> Value {
     let mut obj = IndexMap::new();
-    obj.insert("x".to_string(), Value::Number(10.0));
-    obj.insert("y".to_string(), Value::Number(20.0));
+    obj.insert("x".to_string(), Value::Number(10.0, false));
+    obj.insert("y".to_string(), Value::Number(20.0, false));
     obj.insert("name".to_string(), Value::String(Rc::from("test")));
     Value::Object(Rc::new(RefCell::new(obj)))
 }
@@ -25,7 +25,7 @@ fn test_number_arithmetic() {
     let source = "let result = 10 + 5 * 2; result;";
     let root = Value::Null;
     let result = parse_and_run(source, root).unwrap().unwrap();
-    if let Value::Number(n) = result {
+    if let Value::Number(n, _) = result {
         assert_eq!(n, 20.0, "Should compute 10 + (5 * 2) = 20");
     } else {
         panic!("Expected number result");
@@ -37,7 +37,7 @@ fn test_field_access() {
     let source = "let val = root.x; val;";
     let root = make_simple_data();
     let result = parse_and_run(source, root).unwrap().unwrap();
-    if let Value::Number(n) = result {
+    if let Value::Number(n, _) = result {
         assert_eq!(n, 10.0);
     } else {
         panic!("Expected number from field access");
@@ -47,7 +47,7 @@ fn test_field_access() {
 #[test]
 fn test_chained_field_access() {
     let mut inner = IndexMap::new();
-    inner.insert("value".to_string(), Value::Number(42.0));
+    inner.insert("value".to_string(), Value::Number(42.0, false));
     
     let mut outer = IndexMap::new();
     outer.insert("nested".to_string(), Value::Object(Rc::new(RefCell::new(inner))));
@@ -56,7 +56,7 @@ fn test_chained_field_access() {
     
     let source = "let val = root.nested.value; val;";
     let result = parse_and_run(source, root).unwrap().unwrap();
-    if let Value::Number(n) = result {
+    if let Value::Number(n, _) = result {
         assert_eq!(n, 42.0);
     } else {
         panic!("Expected number from nested field access");
@@ -65,14 +65,14 @@ fn test_chained_field_access() {
 
 #[test]
 fn test_array_indexing() {
-    let arr = vec![Value::Number(10.0), Value::Number(20.0), Value::Number(30.0)];
+    let arr = vec![Value::Number(10.0, false), Value::Number(20.0, false), Value::Number(30.0, false)];
     let mut obj = IndexMap::new();
     obj.insert("numbers".to_string(), Value::Array(Rc::new(RefCell::new(arr))));
     let root = Value::Object(Rc::new(RefCell::new(obj)));
     
     let source = "let first = root.numbers[0]; first;";
     let result = parse_and_run(source, root).unwrap().unwrap();
-    if let Value::Number(n) = result {
+    if let Value::Number(n, _) = result {
         assert_eq!(n, 10.0);
     } else {
         panic!("Expected number from array index");
@@ -164,7 +164,7 @@ fn test_zero_and_negative_numbers() {
     let source = "let result = -5 + 0; result;";
     let root = Value::Null;
     let result = parse_and_run(source, root).unwrap().unwrap();
-    assert_eq!(result, Value::Number(-5.0));
+    assert_eq!(result, Value::Number(-5.0, false));
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn test_empty_array_length() {
     let source = "let arr = []; arr.length;";
     let root = Value::Null;
     let result = parse_and_run(source, root).unwrap().unwrap();
-    assert_eq!(result, Value::Number(0.0));
+    assert_eq!(result, Value::Number(0.0, false));
 }
 
 #[test]

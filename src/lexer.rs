@@ -19,7 +19,7 @@ pub enum Token {
     Fn,
 
     Ident(String),
-    Number(f64),
+    Number(f64, bool),  // (value, is_float)
     String(String),
     True,
     False,
@@ -67,7 +67,7 @@ pub enum Token {
 pub enum Value {
     Null,
     Bool(bool),
-    Number(f64),
+    Number(f64, bool),  // (value, is_float)
     String(Rc<str>),
     Array(Rc<RefCell<Vec<Value>>>),
     Object(Rc<RefCell<IndexMap<String, Value>>>),
@@ -79,7 +79,7 @@ impl PartialEq for Value {
         match (self, other) {
             (Value::Null, Value::Null) => true,
             (Value::Bool(b1), Value::Bool(b2)) => b1 == b2,
-            (Value::Number(n1), Value::Number(n2)) => n1 == n2,
+            (Value::Number(n1, _), Value::Number(n2, _)) => n1 == n2,
             (Value::String(s1), Value::String(s2)) => s1 == s2,
             (Value::Array(a1), Value::Array(a2)) => a1 == a2,
             (Value::Object(o1), Value::Object(o2)) => o1 == o2,
@@ -107,7 +107,7 @@ impl Value {
     }
 
     pub fn as_number(&self) -> Option<f64> {
-        if let Value::Number(n) = self {
+        if let Value::Number(n, _) = self {
             Some(*n)
         } else {
             None
@@ -247,7 +247,7 @@ pub fn lexer<'a>()
     let number = text::int(10)
         .then(just('.').then(text::digits(10)).or_not())
         .to_slice()
-        .map(|s: &str| Token::Number(s.parse().unwrap()));
+        .map(|s: &str| Token::Number(s.parse().unwrap(), s.contains('.')));
 
     let escape = just('\\').ignore_then(choice((
         just('\\'),
@@ -371,11 +371,11 @@ mod tests {
 
     #[test]
     fn test_numbers() {
-        assert_eq!(lex("42"), vec![Token::Number(42.0)]);
-        assert_eq!(lex("0"), vec![Token::Number(0.0)]);
-        assert_eq!(lex("3.14"), vec![Token::Number(3.14)]);
-        assert_eq!(lex("0.5"), vec![Token::Number(0.5)]);
-        assert_eq!(lex("123.456"), vec![Token::Number(123.456)]);
+        assert_eq!(lex("42"), vec![Token::Number(42.0, false)]);
+        assert_eq!(lex("0"), vec![Token::Number(0.0, false)]);
+        assert_eq!(lex("3.14"), vec![Token::Number(3.14, true)]);
+        assert_eq!(lex("0.5"), vec![Token::Number(0.5, true)]);
+        assert_eq!(lex("123.456"), vec![Token::Number(123.456, true)]);
     }
 
     #[test]
@@ -478,7 +478,7 @@ mod tests {
                 Token::Let,
                 Token::Ident("x".to_string()),
                 Token::Assign,
-                Token::Number(5.0),
+                Token::Number(5.0, false),
                 Token::Semicolon
             ]
         );
@@ -634,7 +634,7 @@ let test_name = users | .name == "Bob";"#;
             vec![
                 Token::Ident("arr".to_string()),
                 Token::LBracket,
-                Token::Number(0.0),
+                Token::Number(0.0, false),
                 Token::RBracket
             ]
         );
@@ -654,12 +654,12 @@ let test_name = users | .name == "Bob";"#;
                 Token::Let,
                 Token::Ident("x".to_string()),
                 Token::Assign,
-                Token::Number(10.0),
+                Token::Number(10.0, false),
                 Token::Semicolon,
                 Token::Let,
                 Token::Ident("y".to_string()),
                 Token::Assign,
-                Token::Number(20.0),
+                Token::Number(20.0, false),
                 Token::Semicolon,
                 Token::Let,
                 Token::Ident("z".to_string()),
@@ -687,7 +687,7 @@ let test_name = users | .name == "Bob";"#;
                 Token::Dot,
                 Token::Ident("age".to_string()),
                 Token::Greater,
-                Token::Number(18.0),
+                Token::Number(18.0, false),
                 Token::And,
                 Token::Dot,
                 Token::Ident("status".to_string()),

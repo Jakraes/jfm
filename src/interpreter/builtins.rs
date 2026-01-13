@@ -36,7 +36,7 @@ macro_rules! with_string {
 macro_rules! with_number {
     ($args:expr, $name:expr, $body:expr) => {
         match &$args[0] {
-            Value::Number(n) => $body(*n),
+            Value::Number(n, _) => $body(*n),
             _ => Err(InterpreterError::TypeError(format!("{} requires number", $name))),
         }
     };
@@ -46,7 +46,7 @@ macro_rules! unary_math {
     ($name:ident, $op:ident) => {
         pub fn $name(args: &[Value]) -> Result<Value, InterpreterError> {
             require_args!(args, 1, stringify!($op));
-            with_number!(args, stringify!($op), |n: f64| Ok(Value::Number(n.$op())))
+            with_number!(args, stringify!($op), |n: f64| Ok(Value::Number(n.$op(), true)))
         }
     };
 }
@@ -98,64 +98,67 @@ fn to_hashable(value: &Value) -> Option<HashableValue> {
     match value {
         Value::Null => Some(HashableValue::Null),
         Value::Bool(b) => Some(HashableValue::Bool(*b)),
-        Value::Number(n) => Some(HashableValue::Number(n.to_bits())),
+        Value::Number(n, _) => Some(HashableValue::Number(n.to_bits())),
         Value::String(s) => Some(HashableValue::String(s.clone())),
         _ => None,
     }
 }
 
 pub fn builtin_count(args: &[Value]) -> Result<Value, InterpreterError> {
-    if args.is_empty() { return Ok(Value::Number(0.0)); }
+    if args.is_empty() { return Ok(Value::Number(0.0, false)); }
     with_array!(args, "count", |arr: &Rc<RefCell<Vec<Value>>>| {
-        Ok(Value::Number(arr.borrow().len() as f64))
+        Ok(Value::Number(arr.borrow().len() as f64, false))
     })
 }
 
 pub fn builtin_sum(args: &[Value]) -> Result<Value, InterpreterError> {
-    if args.is_empty() { return Ok(Value::Number(0.0)); }
+    if args.is_empty() { return Ok(Value::Number(0.0, false)); }
     with_array!(args, "sum", |arr: &Rc<RefCell<Vec<Value>>>| {
+        let mut has_float = false;
         let total: f64 = arr.borrow().iter()
-            .filter_map(|v| if let Value::Number(n) = v { Some(*n) } else { None })
+            .filter_map(|v| if let Value::Number(n, is_float) = v { has_float |= *is_float; Some(*n) } else { None })
             .sum();
-        Ok(Value::Number(total))
+        Ok(Value::Number(total, has_float || total.fract() != 0.0))
     })
 }
 
 pub fn builtin_avg(args: &[Value]) -> Result<Value, InterpreterError> {
-    if args.is_empty() { return Ok(Value::Number(0.0)); }
+    if args.is_empty() { return Ok(Value::Number(0.0, true)); }
     with_array!(args, "avg", |arr: &Rc<RefCell<Vec<Value>>>| {
         let borrowed = arr.borrow();
-        if borrowed.is_empty() { return Ok(Value::Number(0.0)); }
+        if borrowed.is_empty() { return Ok(Value::Number(0.0, true)); }
         let total: f64 = borrowed.iter()
-            .filter_map(|v| if let Value::Number(n) = v { Some(*n) } else { None })
+            .filter_map(|v| if let Value::Number(n, _) = v { Some(*n) } else { None })
             .sum();
-        Ok(Value::Number(total / borrowed.len() as f64))
+        Ok(Value::Number(total / borrowed.len() as f64, true))  // avg always returns float
     })
 }
 
 pub fn builtin_min(args: &[Value]) -> Result<Value, InterpreterError> {
-    if args.is_empty() { return Ok(Value::Number(0.0)); }
+    if args.is_empty() { return Ok(Value::Number(0.0, false)); }
     with_array!(args, "min", |arr: &Rc<RefCell<Vec<Value>>>| {
+        let mut has_float = false;
         let min = arr.borrow().iter()
-            .filter_map(|v| if let Value::Number(n) = v { Some(*n) } else { None })
+            .filter_map(|v| if let Value::Number(n, is_float) = v { has_float |= *is_float; Some(*n) } else { None })
             .fold(f64::MAX, |acc, n| acc.min(n));
-        Ok(Value::Number(min))
+        Ok(Value::Number(min, has_float || min.fract() != 0.0))
     })
 }
 
 pub fn builtin_max(args: &[Value]) -> Result<Value, InterpreterError> {
-    if args.is_empty() { return Ok(Value::Number(0.0)); }
+    if args.is_empty() { return Ok(Value::Number(0.0, false)); }
     with_array!(args, "max", |arr: &Rc<RefCell<Vec<Value>>>| {
+        let mut has_float = false;
         let max = arr.borrow().iter()
-            .filter_map(|v| if let Value::Number(n) = v { Some(*n) } else { None })
+            .filter_map(|v| if let Value::Number(n, is_float) = v { has_float |= *is_float; Some(*n) } else { None })
             .fold(f64::MIN, |acc, n| acc.max(n));
-        Ok(Value::Number(max))
+        Ok(Value::Number(max, has_float || max.fract() != 0.0))
     })
 }
 
 pub fn builtin_take(args: &[Value]) -> Result<Value, InterpreterError> {
     require_args!(args, 2, "take");
-    if let (Value::Array(arr), Value::Number(n)) = (&args[0], &args[1]) {
+    if let (Value::Array(arr), Value::Number(n, _)) = (&args[0], &args[1]) {
         let result: Vec<Value> = arr.borrow().iter().take(*n as usize).cloned().collect();
         Ok(Value::Array(Rc::new(RefCell::new(result))))
     } else {
@@ -231,7 +234,7 @@ pub fn builtin_sort_by(
         arr.borrow_mut().sort_by(|a, b| {
             let (val_a, val_b) = (get_field(a, field).unwrap_or(Value::Null), get_field(b, field).unwrap_or(Value::Null));
             match (val_a, val_b) {
-                (Value::Number(n1), Value::Number(n2)) => n1.partial_cmp(&n2).unwrap_or(std::cmp::Ordering::Equal),
+                (Value::Number(n1, _), Value::Number(n2, _)) => n1.partial_cmp(&n2).unwrap_or(std::cmp::Ordering::Equal),
                 (Value::String(s1), Value::String(s2)) => s1.cmp(&s2),
                 _ => std::cmp::Ordering::Equal,
             }
@@ -252,7 +255,7 @@ pub fn builtin_group_by(
         for item in arr_rc.borrow().iter() {
             let key = match get_field(item, field).unwrap_or(Value::Null) {
                 Value::String(s) => s.to_string(),
-                Value::Number(n) => n.to_string(),
+                Value::Number(n, is_float) => if is_float { n.to_string() } else { format!("{:.0}", n) },
                 Value::Bool(b) => b.to_string(),
                 _ => "null".to_string(),
             };
@@ -281,7 +284,7 @@ pub fn builtin_sort(args: &[Value]) -> Result<Value, InterpreterError> {
     with_array!(args, "sort", |arr: &Rc<RefCell<Vec<Value>>>| {
         let mut result: Vec<Value> = arr.borrow().iter().cloned().collect();
         result.sort_by(|a, b| match (a, b) {
-            (Value::Number(n1), Value::Number(n2)) => n1.partial_cmp(n2).unwrap_or(std::cmp::Ordering::Equal),
+            (Value::Number(n1, _), Value::Number(n2, _)) => n1.partial_cmp(n2).unwrap_or(std::cmp::Ordering::Equal),
             (Value::String(s1), Value::String(s2)) => s1.cmp(s2),
             (Value::Bool(b1), Value::Bool(b2)) => b1.cmp(b2),
             _ => std::cmp::Ordering::Equal,
@@ -302,12 +305,12 @@ pub fn builtin_slice(args: &[Value]) -> Result<Value, InterpreterError> {
         };
         
         let start = args.get(1).map(|v| match v {
-            Value::Number(n) => Ok(parse_index(*n)),
+            Value::Number(n, _) => Ok(parse_index(*n)),
             _ => Err(InterpreterError::TypeError("slice index must be number".to_string())),
         }).transpose()?.unwrap_or(0);
         
         let end = args.get(2).map(|v| match v {
-            Value::Number(n) => Ok(parse_index(*n)),
+            Value::Number(n, _) => Ok(parse_index(*n)),
             _ => Err(InterpreterError::TypeError("slice index must be number".to_string())),
         }).transpose()?.unwrap_or(len);
         
@@ -343,7 +346,7 @@ pub fn builtin_flat(args: &[Value]) -> Result<Value, InterpreterError> {
     require_args!(args, 1, "flat");
     with_array!(args, "flat", |arr: &Rc<RefCell<Vec<Value>>>| {
         let depth = args.get(1).map(|v| match v {
-            Value::Number(n) => Ok(*n as usize),
+            Value::Number(n, _) => Ok(*n as usize),
             _ => Err(InterpreterError::TypeError("flat depth must be number".to_string())),
         }).transpose()?.unwrap_or(1);
         Ok(Value::Array(Rc::new(RefCell::new(flatten_recursive(&arr.borrow(), depth, 0)))))
@@ -377,10 +380,10 @@ pub fn builtin_find_index(
     if let (Value::Array(arr), Value::Function(_)) = (&args[0], &args[1]) {
         for (i, item) in arr.borrow().iter().enumerate() {
             if let Value::Bool(true) = call_fn(&args[1], &[item.clone()])? {
-                return Ok(Value::Number(i as f64));
+                return Ok(Value::Number(i as f64, false));
             }
         }
-        Ok(Value::Number(-1.0))
+        Ok(Value::Number(-1.0, false))
     } else {
         Err(InterpreterError::TypeError("find_index requires array and function".to_string()))
     }
@@ -533,7 +536,7 @@ pub fn builtin_replace(args: &[Value]) -> Result<Value, InterpreterError> {
 
 pub fn builtin_len(args: &[Value]) -> Result<Value, InterpreterError> {
     require_args!(args, 1, "len");
-    with_string!(args, "len", |s: &Rc<str>| Ok(Value::Number(s.len() as f64)))
+    with_string!(args, "len", |s: &Rc<str>| Ok(Value::Number(s.len() as f64, false)))
 }
 
 pub fn builtin_keys(args: &[Value]) -> Result<Value, InterpreterError> {
@@ -592,7 +595,7 @@ pub fn builtin_merge(args: &[Value]) -> Result<Value, InterpreterError> {
 pub fn builtin_typeof(args: &[Value]) -> Result<Value, InterpreterError> {
     require_args!(args, 1, "typeof");
     Ok(Value::String(Rc::from(match &args[0] {
-        Value::Null => "null", Value::Bool(_) => "bool", Value::Number(_) => "number",
+        Value::Null => "null", Value::Bool(_) => "bool", Value::Number(_, _) => "number",
         Value::String(_) => "string", Value::Array(_) => "array", Value::Object(_) => "object",
         Value::Function(_) => "function",
     })))
@@ -602,7 +605,7 @@ type_check!(builtin_is_null, Value::Null);
 type_check!(builtin_is_array, Value::Array(_));
 type_check!(builtin_is_object, Value::Object(_));
 type_check!(builtin_is_string, Value::String(_));
-type_check!(builtin_is_number, Value::Number(_));
+type_check!(builtin_is_number, Value::Number(_, _));
 type_check!(builtin_is_bool, Value::Bool(_));
 
 pub fn builtin_to_string(
@@ -616,8 +619,8 @@ pub fn builtin_to_string(
 pub fn builtin_to_number(args: &[Value]) -> Result<Value, InterpreterError> {
     require_args!(args, 1, "to_number");
     match &args[0] {
-        Value::Number(n) => Ok(Value::Number(*n)),
-        Value::String(s) => s.parse::<f64>().map(Value::Number)
+        Value::Number(n, is_float) => Ok(Value::Number(*n, *is_float)),
+        Value::String(s) => s.parse::<f64>().map(|n| Value::Number(n, s.contains('.')))
             .map_err(|_| InterpreterError::InvalidOperation("to_number: invalid string".to_string())),
         _ => Err(InterpreterError::TypeError("to_number requires number or string".to_string())),
     }
@@ -631,7 +634,7 @@ pub fn builtin_parse_json(args: &[Value]) -> Result<Value, InterpreterError> {
             match v {
                 serde_json::Value::Null => Value::Null,
                 serde_json::Value::Bool(b) => Value::Bool(*b),
-                serde_json::Value::Number(n) => Value::Number(n.as_f64().unwrap_or(0.0)),
+                serde_json::Value::Number(n) => Value::Number(n.as_f64().unwrap_or(0.0), n.is_f64()),
                 serde_json::Value::String(s) => Value::String(Rc::from(s.as_str())),
                 serde_json::Value::Array(a) => Value::Array(Rc::new(RefCell::new(a.iter().map(convert).collect()))),
                 serde_json::Value::Object(o) => Value::Object(Rc::new(RefCell::new(o.iter().map(|(k, v)| (k.clone(), convert(v))).collect()))),
@@ -654,14 +657,14 @@ pub fn builtin_sqrt(args: &[Value]) -> Result<Value, InterpreterError> {
     require_args!(args, 1, "sqrt");
     with_number!(args, "sqrt", |n: f64| {
         if n < 0.0 { Err(InterpreterError::InvalidOperation("sqrt: negative number".to_string())) }
-        else { Ok(Value::Number(n.sqrt())) }
+        else { Ok(Value::Number(n.sqrt(), true)) }
     })
 }
 
 pub fn builtin_pow(args: &[Value]) -> Result<Value, InterpreterError> {
     require_args!(args, 2, "pow");
-    if let (Value::Number(base), Value::Number(exp)) = (&args[0], &args[1]) {
-        Ok(Value::Number(base.powf(*exp)))
+    if let (Value::Number(base, _), Value::Number(exp, _)) = (&args[0], &args[1]) {
+        Ok(Value::Number(base.powf(*exp), true))
     } else {
         Err(InterpreterError::TypeError("pow requires two numbers".to_string()))
     }
@@ -669,6 +672,6 @@ pub fn builtin_pow(args: &[Value]) -> Result<Value, InterpreterError> {
 
 pub fn builtin_random(_args: &[Value]) -> Result<Value, InterpreterError> {
     use rand::Rng;
-    Ok(Value::Number(rand::thread_rng().r#gen::<f64>()))
+    Ok(Value::Number(rand::thread_rng().r#gen::<f64>(), true))
 }
 

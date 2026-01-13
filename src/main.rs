@@ -449,7 +449,10 @@ fn convert_json_to_internal(json_val: serde_json::Value) -> jfm::lexer::Value {
         serde_json::Value::Bool(b) => Value::Bool(b),
         serde_json::Value::Number(n) => {
             let val = n.as_f64().unwrap_or(0.0);
-            Value::Number(val)
+            let n_str = n.to_string();
+            // With arbitrary_precision feature, n.to_string() preserves the original representation
+            let is_float = n_str.contains('.') || n_str.contains('e') || n_str.contains('E');
+            Value::Number(val, is_float)
         }
         serde_json::Value::String(s) => Value::String(Rc::from(s.as_str())),
         serde_json::Value::Array(arr) => {
@@ -488,7 +491,20 @@ fn format_json(val: &jfm::lexer::Value, indent: Option<usize>) -> String {
     match val {
         Value::Null => "null".to_string(),
         Value::Bool(b) => b.to_string(),
-        Value::Number(n) => if n.fract() == 0.0 { format!("{:.0}", n) } else { n.to_string() },
+        Value::Number(n, is_float) => {
+            if *is_float {
+                // Ensure float representation has a decimal point
+                let s = n.to_string();
+                if s.contains('.') || s.contains('e') || s.contains('E') {
+                    s
+                } else {
+                    format!("{}.0", n)
+                }
+            } else {
+                // Integer representation - no decimal point
+                format!("{:.0}", n)
+            }
+        }
         Value::String(s) => format!("\"{}\"", escape_json_string(s)),
         Value::Function(_) => "\"<function>\"".to_string(),
         Value::Array(arr) => {

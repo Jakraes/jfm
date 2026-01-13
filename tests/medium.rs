@@ -10,21 +10,21 @@ fn make_test_root() -> Value {
     let mut users = Vec::new();
 
     let mut user1 = IndexMap::new();
-    user1.insert("id".to_string(), Value::Number(1.0));
+    user1.insert("id".to_string(), Value::Number(1.0, false));
     user1.insert("name".to_string(), Value::String(Rc::from("Bob")));
-    user1.insert("age".to_string(), Value::Number(30.0));
+    user1.insert("age".to_string(), Value::Number(30.0, false));
     users.push(Value::Object(Rc::new(RefCell::new(user1))));
 
     let mut user2 = IndexMap::new();
-    user2.insert("id".to_string(), Value::Number(2.0));
+    user2.insert("id".to_string(), Value::Number(2.0, false));
     user2.insert("name".to_string(), Value::String(Rc::from("Alice")));
-    user2.insert("age".to_string(), Value::Number(25.0));
+    user2.insert("age".to_string(), Value::Number(25.0, false));
     users.push(Value::Object(Rc::new(RefCell::new(user2))));
 
     let mut user3 = IndexMap::new();
-    user3.insert("id".to_string(), Value::Number(3.0));
+    user3.insert("id".to_string(), Value::Number(3.0, false));
     user3.insert("name".to_string(), Value::String(Rc::from("Charlie")));
-    user3.insert("age".to_string(), Value::Number(35.0));
+    user3.insert("age".to_string(), Value::Number(35.0, false));
     users.push(Value::Object(Rc::new(RefCell::new(user3))));
 
     root_obj.insert("users".to_string(), Value::Array(Rc::new(RefCell::new(users))));
@@ -107,7 +107,7 @@ fn test_array_literal() {
     if let Some(Value::Array(arr)) = result {
         let items = arr.borrow();
         assert_eq!(items.len(), 3);
-        assert_eq!(items[0], Value::Number(1.0));
+        assert_eq!(items[0], Value::Number(1.0, false));
     } else {
         panic!("Expected array, got {:?}", result);
     }
@@ -135,8 +135,8 @@ fn test_range_operator() {
     if let Some(Value::Array(arr)) = result {
         let items = arr.borrow();
         assert_eq!(items.len(), 5);
-        assert_eq!(items[0], Value::Number(1.0));
-        assert_eq!(items[4], Value::Number(5.0));
+        assert_eq!(items[0], Value::Number(1.0, false));
+        assert_eq!(items[4], Value::Number(5.0, false));
     } else {
         panic!("Expected array, got {:?}", result);
     }
@@ -151,7 +151,7 @@ fn test_compound_assignment() {
         x;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();
-    assert_eq!(result, Some(Value::Number(30.0)));
+    assert_eq!(result, Some(Value::Number(30.0, false)));
 }
 
 #[test]
@@ -175,7 +175,7 @@ fn test_push() {
     if let Some(Value::Array(arr)) = result {
         let items = arr.borrow();
         assert_eq!(items.len(), 3);
-        assert_eq!(items[2], Value::Number(3.0));
+        assert_eq!(items[2], Value::Number(3.0, false));
     } else {
         panic!("Expected array, got {:?}", result);
     }
