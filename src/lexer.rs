@@ -50,6 +50,7 @@ pub enum Token {
     SlashEq,
     PipeEq,
     DotDot,
+    Spread,
     Arrow,
     Comma,
     Colon,
@@ -222,9 +223,11 @@ pub enum ExprKind {
     },
     Object {
         fields: Vec<(String, Expr)>,
+        spreads: Vec<(usize, Expr)>,
     },
     Array {
         elements: Vec<Expr>,
+        spreads: Vec<(usize, Expr)>,
     },
     Lambda {
         params: Vec<Rc<str>>,
@@ -404,6 +407,7 @@ pub fn lexer<'a>()
         just("*=").to(Token::StarEq),
         just("/=").to(Token::SlashEq),
         just("|=").to(Token::PipeEq),
+        just("...").to(Token::Spread),
         just("..").to(Token::DotDot),
         just("=>").to(Token::Arrow),
         just("?.").to(Token::QuestionDot),

@@ -849,9 +849,16 @@ impl TokenParser {
             Token::LBracket => {
                 let start_span = span;
                 let mut elements = Vec::new();
+                let mut spreads = Vec::new();
                 if !matches!(self.current_token(), Some(Token::RBracket)) {
                     loop {
-                        elements.push(self.parse_expression()?);
+                        if matches!(self.current_token(), Some(Token::Spread)) {
+                            self.advance();
+                            let spread_expr = self.parse_expression()?;
+                            spreads.push((elements.len(), spread_expr));
+                        } else {
+                            elements.push(self.parse_expression()?);
+                        }
                         if matches!(self.current_token(), Some(Token::Comma)) {
                             self.advance();
                         } else {
@@ -861,30 +868,37 @@ impl TokenParser {
                 }
                 let end_span = self.expect(Token::RBracket)?;
                 Ok(Expr {
-                    kind: ExprKind::Array { elements },
+                    kind: ExprKind::Array { elements, spreads },
                     span: start_span.merge(end_span),
                 })
             }
             Token::LBrace => {
                 let start_span = span;
                 let mut fields = Vec::new();
+                let mut spreads = Vec::new();
                 if !matches!(self.current_token(), Some(Token::RBrace)) {
                     loop {
-                        let key = match self.advance() {
-                            Some(SpannedToken { token: Token::Ident(key_name), .. }) => key_name,
-                            Some(SpannedToken { token: Token::String(key_name), .. }) => key_name,
-                            other => {
-                                let err_span =
-                                    other.map(|st| st.span).unwrap_or(self.current_span());
-                                return Err(ParseError::new(
-                                    "expected identifier or string for object key",
-                                    err_span,
-                                ));
-                            }
-                        };
-                        self.expect(Token::Colon)?;
-                        let value = self.parse_expression()?;
-                        fields.push((key, value));
+                        if matches!(self.current_token(), Some(Token::Spread)) {
+                            self.advance();
+                            let spread_expr = self.parse_expression()?;
+                            spreads.push((fields.len(), spread_expr));
+                        } else {
+                            let key = match self.advance() {
+                                Some(SpannedToken { token: Token::Ident(key_name), .. }) => key_name,
+                                Some(SpannedToken { token: Token::String(key_name), .. }) => key_name,
+                                other => {
+                                    let err_span =
+                                        other.map(|st| st.span).unwrap_or(self.current_span());
+                                    return Err(ParseError::new(
+                                        "expected identifier or string for object key",
+                                        err_span,
+                                    ));
+                                }
+                            };
+                            self.expect(Token::Colon)?;
+                            let value = self.parse_expression()?;
+                            fields.push((key, value));
+                        }
                         if matches!(self.current_token(), Some(Token::Comma)) {
                             self.advance();
                         } else {
@@ -894,7 +908,7 @@ impl TokenParser {
                 }
                 let end_span = self.expect(Token::RBrace)?;
                 Ok(Expr {
-                    kind: ExprKind::Object { fields },
+                    kind: ExprKind::Object { fields, spreads },
                     span: start_span.merge(end_span),
                 })
             }

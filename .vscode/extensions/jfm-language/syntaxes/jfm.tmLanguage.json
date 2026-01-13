@@ -145,7 +145,7 @@
             "patterns": [
                 {
                     "name": "support.function.array.jfm",
-                    "match": "\\b(count|sum|avg|min|max|take|unique|sort|sort_by|group_by|reverse|slice|push|pop|shift|flat|flatten|first|last|zip|find|find_index|every|some|reduce|filter|map)\\b"
+                    "match": "\\b(count|sum|avg|min|max|take|unique|sort|sort_by|group_by|reverse|slice|push|pop|shift|flat|flatten|first|last|zip|find|find_index|every|some|reduce|filter|map|enumerate|replicate|range|cross|clone)\\b"
                 },
                 {
                     "name": "support.function.string.jfm",
@@ -153,7 +153,7 @@
                 },
                 {
                     "name": "support.function.object.jfm",
-                    "match": "\\b(keys|values|entries|has|merge)\\b"
+                    "match": "\\b(keys|values|entries|has|merge|deep_merge|set_path)\\b"
                 },
                 {
                     "name": "support.function.type.jfm",
@@ -226,6 +226,10 @@
                 {
                     "name": "keyword.operator.pipe.jfm",
                     "match": "\\|"
+                },
+                {
+                    "name": "keyword.operator.spread.jfm",
+                    "match": "\\.\\.\\."
                 },
                 {
                     "name": "keyword.operator.range.jfm",

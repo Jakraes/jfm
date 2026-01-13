@@ -165,6 +165,45 @@ random();
 print("Hello, World!");
 print(name, age, score);
 
+// Generator functions - replicate
+let users = replicate(5, i => ({
+    id: i,
+    loyalty_points: 1000 + i
+}));
+
+// Generator functions - enumerate
+for pair in enumerate(["a", "b", "c"]) {
+    let idx = pair[0];
+    let val = pair[1];
+    print(`Index ${idx}: ${val}`);
+}
+
+// Generator functions - range with step
+let powers = range(0, 100, 10);
+
+// Generator functions - cross (cartesian product)
+let combos = cross([1, 2], ["a", "b"]);
+
+// Object utilities - deep_merge
+let base = { nested: { x: 1, y: 2 } };
+let overlay = { nested: { y: 99, z: 3 } };
+let merged = deep_merge(base, overlay);
+
+// Object utilities - set_path
+let config = set_path({}, "department.heads.count", 4);
+
+// Object utilities - clone (deep copy)
+let original = { data: [1, 2, 3] };
+let copy = clone(original);
+
+// Spread operator - arrays
+let arr1 = [1, 2];
+let arr2 = [0, ...arr1, 3, 4];
+
+// Spread operator - objects
+let base_user = { role: "user", active: true };
+let admin = { ...base_user, role: "admin" };
+
 // Include external script
 // include("utils.jfm");
 
@@ -173,5 +212,7 @@ print(name, age, score);
     "name": name,
     "age": age,
     "status": status,
-    "greeting": greeting
+    "greeting": greeting,
+    "users": users,
+    "merged": merged
 }
