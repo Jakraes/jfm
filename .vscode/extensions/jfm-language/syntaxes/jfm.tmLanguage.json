@@ -3,36 +3,16 @@
     "name": "JFM",
     "scopeName": "source.jfm",
     "patterns": [
-        {
-            "include": "#comments"
-        },
-        {
-            "include": "#strings"
-        },
-        {
-            "include": "#template-strings"
-        },
-        {
-            "include": "#numbers"
-        },
-        {
-            "include": "#keywords"
-        },
-        {
-            "include": "#builtins"
-        },
-        {
-            "include": "#constants"
-        },
-        {
-            "include": "#operators"
-        },
-        {
-            "include": "#punctuation"
-        },
-        {
-            "include": "#variables"
-        }
+        { "include": "#comments" },
+        { "include": "#strings" },
+        { "include": "#template-strings" },
+        { "include": "#numbers" },
+        { "include": "#keywords" },
+        { "include": "#builtins" },
+        { "include": "#constants" },
+        { "include": "#operators" },
+        { "include": "#punctuation" },
+        { "include": "#variables" }
     ],
     "repository": {
         "comments": {
@@ -74,43 +54,21 @@
                             "begin": "\\$\\{",
                             "end": "\\}",
                             "beginCaptures": {
-                                "0": {
-                                    "name": "punctuation.definition.template-expression.begin.jfm"
-                                }
+                                "0": { "name": "punctuation.definition.template-expression.begin.jfm" }
                             },
                             "endCaptures": {
-                                "0": {
-                                    "name": "punctuation.definition.template-expression.end.jfm"
-                                }
+                                "0": { "name": "punctuation.definition.template-expression.end.jfm" }
                             },
                             "patterns": [
-                                {
-                                    "include": "#comments"
-                                },
-                                {
-                                    "include": "#strings"
-                                },
-                                {
-                                    "include": "#numbers"
-                                },
-                                {
-                                    "include": "#keywords"
-                                },
-                                {
-                                    "include": "#builtins"
-                                },
-                                {
-                                    "include": "#constants"
-                                },
-                                {
-                                    "include": "#operators"
-                                },
-                                {
-                                    "include": "#punctuation"
-                                },
-                                {
-                                    "include": "#variables"
-                                }
+                                { "include": "#comments" },
+                                { "include": "#strings" },
+                                { "include": "#numbers" },
+                                { "include": "#keywords" },
+                                { "include": "#builtins" },
+                                { "include": "#constants" },
+                                { "include": "#operators" },
+                                { "include": "#punctuation" },
+                                { "include": "#variables" }
                             ]
                         }
                     ]
@@ -138,6 +96,10 @@
                 {
                     "name": "keyword.declaration.jfm",
                     "match": "\\b(let|fn)\\b"
+                },
+                {
+                    "name": "keyword.control.wildcard.jfm",
+                    "match": "\\b_\\b"
                 }
             ]
         },
@@ -145,7 +107,7 @@
             "patterns": [
                 {
                     "name": "support.function.array.jfm",
-                    "match": "\\b(count|sum|avg|min|max|take|unique|sort|sort_by|group_by|reverse|slice|push|pop|shift|flat|flatten|first|last|zip|find|find_index|every|some|reduce|filter|map)\\b"
+                    "match": "\\b(sum|avg|min|max|unique|sort|sort_by|group_by|reverse|slice|push|pop|shift|flat|first|last|zip|find|find_index|every|some|reduce|enumerate|clone)\\b"
                 },
                 {
                     "name": "support.function.string.jfm",
@@ -153,7 +115,7 @@
                 },
                 {
                     "name": "support.function.object.jfm",
-                    "match": "\\b(keys|values|entries|has|merge)\\b"
+                    "match": "\\b(keys|values|entries|has|merge|deep_merge|set_path)\\b"
                 },
                 {
                     "name": "support.function.type.jfm",
@@ -166,6 +128,10 @@
                 {
                     "name": "support.function.io.jfm",
                     "match": "\\b(print|input|include)\\b"
+                },
+                {
+                    "name": "support.function.generator.jfm",
+                    "match": "\\b(replicate|range|cross)\\b"
                 }
             ]
         },
@@ -186,18 +152,22 @@
                 {
                     "name": "variable.language.root.jfm",
                     "match": "\\broot\\b"
+                },
+                {
+                    "name": "variable.language.this.jfm",
+                    "match": "@"
                 }
             ]
         },
         "operators": {
             "patterns": [
                 {
-                    "name": "keyword.operator.assignment.compound.jfm",
-                    "match": "\\+=|-=|\\*=|/=|\\|="
+                    "name": "keyword.operator.spread.jfm",
+                    "match": "\\.\\.\\."
                 },
                 {
-                    "name": "keyword.operator.assignment.jfm",
-                    "match": "="
+                    "name": "keyword.operator.assignment.compound.jfm",
+                    "match": "\\+=|-=|\\*=|/="
                 },
                 {
                     "name": "keyword.operator.comparison.jfm",
@@ -212,16 +182,20 @@
                     "match": "\\?\\?"
                 },
                 {
-                    "name": "keyword.operator.ternary.jfm",
-                    "match": "\\?|:"
-                },
-                {
                     "name": "keyword.operator.optional-chaining.jfm",
                     "match": "\\?\\."
                 },
                 {
+                    "name": "keyword.operator.ternary.jfm",
+                    "match": "\\?"
+                },
+                {
                     "name": "keyword.operator.arrow.jfm",
                     "match": "=>"
+                },
+                {
+                    "name": "keyword.operator.assignment.jfm",
+                    "match": "="
                 },
                 {
                     "name": "keyword.operator.pipe.jfm",
@@ -234,6 +208,10 @@
                 {
                     "name": "keyword.operator.arithmetic.jfm",
                     "match": "\\+|-|\\*|/|%|\\^"
+                },
+                {
+                    "name": "punctuation.separator.colon.jfm",
+                    "match": ":"
                 },
                 {
                     "name": "keyword.operator.accessor.jfm",
