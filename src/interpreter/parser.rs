@@ -1052,6 +1052,13 @@ impl TokenParser {
                     span: full_span,
                 })
             }
+            Token::At => {
+                // @ is the pipe context variable, represented as identifier "@"
+                Ok(Expr {
+                    kind: ExprKind::Identifier(Rc::from("@")),
+                    span,
+                })
+            }
             Token::Match => self.parse_match_expression(span),
             _ => Err(ParseError::new(
                 format!("unexpected token: {:?}", token),

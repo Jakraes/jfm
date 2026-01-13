@@ -200,7 +200,7 @@ fn test_clone_basic() {
 
 #[test]
 fn test_clone_array() {
-    let result = run_query("let a = [1, 2, 3]; let b = clone(a); push(b, 4); count(a);");
+    let result = run_query("let a = [1, 2, 3]; let b = clone(a); push(b, 4); a.length;");
     assert_eq!(value_to_json(&result), "3");
 }
 
@@ -258,7 +258,7 @@ fn test_replicate_with_deep_merge() {
 
 #[test]
 fn test_cross_with_enumerate() {
-    let result = run_query("count(cross([1, 2], [3, 4, 5]));");
+    let result = run_query("cross([1, 2], [3, 4, 5]).length;");
     assert_eq!(value_to_json(&result), "6");
 }
 

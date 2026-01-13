@@ -104,12 +104,8 @@ fn to_hashable(value: &Value) -> Option<HashableValue> {
     }
 }
 
-pub fn builtin_count(args: &[Value]) -> Result<Value, InterpreterError> {
-    if args.is_empty() { return Ok(Value::Number(0.0, false)); }
-    with_array!(args, "count", |arr: &Rc<RefCell<Vec<Value>>>| {
-        Ok(Value::Number(arr.borrow().len() as f64, false))
-    })
-}
+// Note: builtin_count has been removed as redundant.
+// Use .length property instead: `arr.length` or `root.users.length`
 
 pub fn builtin_sum(args: &[Value]) -> Result<Value, InterpreterError> {
     if args.is_empty() { return Ok(Value::Number(0.0, false)); }
@@ -156,15 +152,8 @@ pub fn builtin_max(args: &[Value]) -> Result<Value, InterpreterError> {
     })
 }
 
-pub fn builtin_take(args: &[Value]) -> Result<Value, InterpreterError> {
-    require_args!(args, 2, "take");
-    if let (Value::Array(arr), Value::Number(n, _)) = (&args[0], &args[1]) {
-        let result: Vec<Value> = arr.borrow().iter().take(*n as usize).cloned().collect();
-        Ok(Value::Array(Rc::new(RefCell::new(result))))
-    } else {
-        Err(InterpreterError::type_error("take requires array and number"))
-    }
-}
+// Note: builtin_take has been removed as redundant.
+// Use slice instead: `slice(arr, 0, n)` or `arr | slice(0, n)`
 
 pub fn builtin_push(args: &[Value]) -> Result<Value, InterpreterError> {
     require_args!(args, 2, "push");
@@ -353,41 +342,10 @@ pub fn builtin_flat(args: &[Value]) -> Result<Value, InterpreterError> {
     })
 }
 
-pub fn builtin_flatten(args: &[Value]) -> Result<Value, InterpreterError> { builtin_flat(args) }
+// Note: builtin_map and builtin_filter have been removed as redundant.
+// Use pipes instead: `.users | .name` (map) and `.users | .age > 25` (filter)
 
-pub fn builtin_map(
-    args: &[Value],
-    mut call_fn: impl FnMut(&Value, &[Value]) -> Result<Value, InterpreterError>,
-) -> Result<Value, InterpreterError> {
-    require_args!(args, 2, "map");
-    if let (Value::Array(arr), Value::Function(_)) = (&args[0], &args[1]) {
-        let mut result = Vec::new();
-        for item in arr.borrow().iter() {
-            result.push(call_fn(&args[1], &[item.clone()])?);
-        }
-        Ok(Value::Array(Rc::new(RefCell::new(result))))
-    } else {
-        Err(InterpreterError::type_error("map requires array and function"))
-    }
-}
-
-pub fn builtin_filter(
-    args: &[Value],
-    mut call_fn: impl FnMut(&Value, &[Value]) -> Result<Value, InterpreterError>,
-) -> Result<Value, InterpreterError> {
-    require_args!(args, 2, "filter");
-    if let (Value::Array(arr), Value::Function(_)) = (&args[0], &args[1]) {
-        let mut result = Vec::new();
-        for item in arr.borrow().iter() {
-            if let Value::Bool(true) = call_fn(&args[1], &[item.clone()])? {
-                result.push(item.clone());
-            }
-        }
-        Ok(Value::Array(Rc::new(RefCell::new(result))))
-    } else {
-        Err(InterpreterError::type_error("filter requires array and function"))
-    }
-}
+// Note: builtin_flatten is removed - use builtin_flat instead.
 
 pub fn builtin_find(
     args: &[Value],

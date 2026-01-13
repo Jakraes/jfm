@@ -8,21 +8,33 @@ use chumsky::Parser;
 use std::rc::Rc;
 use std::cell::RefCell;
 
+/// A segment in a path - either a field name or an array index
+#[derive(Debug, Clone)]
+enum PathSegment {
+    Field(String),
+    Index(usize),
+}
+
 pub struct Interpreter {
     env: Environment,
+    pipe_step: Option<usize>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         Self {
             env: Environment::new(),
+            pipe_step: None,
         }
     }
 
     pub fn with_root(root: Value) -> Self {
         let env = Environment::new();
         env.set("root".to_string(), root);
-        Self { env }
+        Self {
+            env,
+            pipe_step: None,
+        }
     }
 
     pub fn run(&mut self, stmts: Vec<Stmt>) -> Result<Option<Value>, InterpreterError> {
@@ -239,8 +251,70 @@ impl Interpreter {
             }
 
             ExprKind::Pipe { left, right } => {
-                let left_val = self.eval_expr(left)?;
-                self.eval_smart_pipe(left_val, right)
+                // Count how many pipe operators are in the left side
+                let left_pipe_count = self.count_pipe_operators(left);
+                // The current step is left_pipe_count + 1 (the right side we're about to evaluate)
+                // For `a | b | c`: left is `a | b` (1 pipe), so current_step = 1 + 1 = 2
+                // But we want step 3 for `c`, so we need: left_pipe_count + 2
+                // Actually: if left has 1 pipe, that means it's `a | b`, so we've done steps 1 and 2
+                // The right side `c` is step 3, so: left_pipe_count + 2? No.
+                // Let's think: `a | b | c` = Pipe { left: Pipe { left: a, right: b }, right: c }
+                // When evaluating outer pipe:
+                //   - left is Pipe { left: a, right: b }, which has 1 pipe operator
+                //   - So left_pipe_count = 1
+                //   - Steps completed: a (step 1), b (step 2)
+                //   - Current step should be: 1 + left_pipe_count + 1 = 3
+                // Actually simpler: total steps = left_pipe_count + 2
+                // But we want the step number for the right side, which is: left_pipe_count + 2
+                let current_step = left_pipe_count + 2;
+                
+                // Evaluate the left side (which may itself be a pipe chain)
+                let left_val = match self.eval_expr(left) {
+                    Ok(val) => val,
+                    Err(e) => {
+                        // If error occurred in left side, we need to determine which step it was
+                        // The left side could be a single expression or a pipe chain
+                        // For now, we'll use a simpler approach: if left is a pipe, recurse
+                        // Otherwise, it's step 1
+                        let step_num = if matches!(left.kind, ExprKind::Pipe { .. }) {
+                            // If left is a pipe, the error occurred somewhere in that chain
+                            // We can't easily determine the exact step without more context
+                            // For now, use left_pipe_count + 1 as an approximation
+                            left_pipe_count + 1
+                        } else {
+                            1
+                        };
+                        let step_source = self.expr_to_string(left);
+                        return Err(InterpreterError::pipe_chain_error_at(
+                            step_num,
+                            step_source,
+                            e,
+                            left.span,
+                        ));
+                    }
+                };
+                
+                // Set pipe_step for the current step
+                let old_pipe_step = self.pipe_step;
+                self.pipe_step = Some(current_step);
+                
+                // Evaluate the right side with error wrapping
+                let result = match self.eval_smart_pipe(left_val, right) {
+                    Ok(val) => Ok(val),
+                    Err(e) => {
+                        let step_source = self.expr_to_string(right);
+                        Err(InterpreterError::pipe_chain_error_at(
+                            current_step,
+                            step_source,
+                            e,
+                            right.span,
+                        ))
+                    }
+                };
+                
+                // Restore pipe_step
+                self.pipe_step = old_pipe_step;
+                result
             }
 
             ExprKind::Grouped(expr) => self.eval_expr(expr),
@@ -427,33 +501,54 @@ impl Interpreter {
                 Ok(value)
             }
             ExprKind::FieldAccess { object, field } => {
+                // Check if this is a nested path starting from Null (short field/index access)
+                if let Some(path) = self.extract_path_segments(target) {
+                    // This is a short access chain like .profile.age or .items[0].name
+                    if let Some(it_val) = self.env.get("@") {
+                        self.set_nested_path(&it_val, &path, value.clone())?;
+                        return Ok(value);
+                    }
+                    // Fall back to root
+                    if let Some(root_val) = self.env.get("root") {
+                        self.set_nested_path(&root_val, &path, value.clone())?;
+                        return Ok(value);
+                    }
+                    return Err(InterpreterError::type_error("Cannot set field - no context object"));
+                }
+                
+                // Not a short field access chain, evaluate the object
                 let obj_val = self.eval_expr(object)?;
                 match obj_val {
                     Value::Object(map_rc) => {
                         map_rc.borrow_mut().insert(field.clone(), value.clone());
                         Ok(value)
                     }
-                    // Handle short field access (.field) where object is Null - use _it
-                    Value::Null => {
-                        if let Some(it_val) = self.env.get("_it") {
-                            if let Value::Object(map_rc) = it_val {
-                                map_rc.borrow_mut().insert(field.clone(), value.clone());
-                                return Ok(value);
-                            }
-                        }
-                        Err(InterpreterError::type_error("Cannot set field on non-object"))
-                    }
                     _ => Err(InterpreterError::type_error("Cannot set field on non-object")),
                 }
             }
             ExprKind::ArrayIndex { array, index } => {
-                let arr_val = self.eval_expr(array)?;
+                // Check if this is a nested path starting from Null (short field/index access)
+                if let Some(path) = self.extract_path_segments(target) {
+                    // This is a short access chain like .items[0] or .data[0].value
+                    if let Some(it_val) = self.env.get("@") {
+                        self.set_nested_path(&it_val, &path, value.clone())?;
+                        return Ok(value);
+                    }
+                    // Fall back to root
+                    if let Some(root_val) = self.env.get("root") {
+                        self.set_nested_path(&root_val, &path, value.clone())?;
+                        return Ok(value);
+                    }
+                    return Err(InterpreterError::type_error("Cannot set index - no context object"));
+                }
+
                 let idx_val = self.eval_expr(index)?;
                 let idx = match idx_val {
                     Value::Number(n, _) => n as usize,
                     _ => return Err(InterpreterError::type_error("Index must be a number")),
                 };
 
+                let arr_val = self.eval_expr(array)?;
                 match arr_val {
                     Value::Array(items_rc) => {
                         let mut items = items_rc.borrow_mut();
@@ -493,13 +588,13 @@ impl Interpreter {
             return self.call_function(name, arg_vals);
         }
         
-        // Check if expression is a binary operation on a short field access (.field + 2)
+        // Check if expression is a binary operation on a short field/index access (.field + 2, .profile.age + 5, or .items[0] + 1)
         // These should automatically mutate the field and return the modified object
         // This makes `.id + 2` equivalent to `.id += 2` in pipe context
         let mutation_info = self.get_pipe_mutation_info(right);
         
-        // Check if expression is an assignment on a short field access (.field = value)
-        let is_assignment = self.is_pipe_assignment(right);
+        // Check if expression is an assignment on a short field/index access (.field = value, .profile.age = value, or .items[0] = value)
+        let assignment_path = self.get_pipe_assignment_path(right);
         
         match left {
             Value::Array(items_rc) => {
@@ -508,29 +603,35 @@ impl Interpreter {
                 for item in items.iter() {
                     let old_env = Rc::new(self.env.clone());
                     self.env = Environment::with_parent(old_env.clone());
-                    self.env.set("_it".to_string(), item.clone());
+                    self.env.set("@".to_string(), item.clone());
 
-                    if let Some((field, op, value_expr)) = &mutation_info {
+                    if let Some((path, op, value_expr)) = &mutation_info {
                         // Evaluate the mutation: get current value, apply op, set back
-                        let current = self.get_field(&item, field)?;
+                        let current = self.get_nested_path(item, path)?;
                         let right_val = self.eval_expr(value_expr)?;
                         let new_val = self.eval_binary_op(&current, op, &right_val)?;
                         
-                        // Update the field on _it
-                        if let Some(Value::Object(map_rc)) = self.env.get("_it") {
-                            map_rc.borrow_mut().insert(field.clone(), new_val);
+                        // Update the field on @ using nested path
+                        if let Some(it_val) = self.env.get("@") {
+                            self.set_nested_path(&it_val, path, new_val)?;
                         }
                         
-                        // Return the modified _it
-                        if let Some(modified_item) = self.env.get("_it") {
+                        // Return the modified @
+                        if let Some(modified_item) = self.env.get("@") {
                             results.push(modified_item);
                         } else {
                             results.push(item.clone());
                         }
-                    } else if is_assignment {
-                        // Evaluate assignment, then return modified _it
-                        self.eval_expr(right)?;
-                        if let Some(modified_item) = self.env.get("_it") {
+                    } else if let Some(path) = &assignment_path {
+                        // Extract the value from the assignment expression
+                        if let ExprKind::Assignment { value, .. } = &right.kind {
+                            let new_val = self.eval_expr(value)?;
+                            // Update using nested path
+                            if let Some(it_val) = self.env.get("@") {
+                                self.set_nested_path(&it_val, path, new_val)?;
+                            }
+                        }
+                        if let Some(modified_item) = self.env.get("@") {
                             results.push(modified_item);
                         } else {
                             results.push(item.clone());
@@ -553,24 +654,30 @@ impl Interpreter {
             other => {
                 let old_env = Rc::new(self.env.clone());
                 self.env = Environment::with_parent(old_env.clone());
-                self.env.set("_it".to_string(), other.clone());
+                self.env.set("@".to_string(), other.clone());
                 
-                let result = if let Some((field, op, value_expr)) = &mutation_info {
-                    // Evaluate the mutation
-                    let current = self.get_field(&other, &field)?;
+                let result = if let Some((path, op, value_expr)) = &mutation_info {
+                    // Evaluate the mutation using nested path
+                    let current = self.get_nested_path(&other, path)?;
                     let right_val = self.eval_expr(value_expr)?;
                     let new_val = self.eval_binary_op(&current, op, &right_val)?;
                     
-                    // Update the field on _it
-                    if let Some(Value::Object(map_rc)) = self.env.get("_it") {
-                        map_rc.borrow_mut().insert(field.clone(), new_val);
+                    // Update using nested path
+                    if let Some(it_val) = self.env.get("@") {
+                        self.set_nested_path(&it_val, path, new_val)?;
                     }
                     
-                    self.env.get("_it").unwrap_or(other)
-                } else if is_assignment {
-                    // Evaluate assignment, then return modified _it
-                    self.eval_expr(right)?;
-                    self.env.get("_it").unwrap_or(other)
+                    self.env.get("@").unwrap_or(other)
+                } else if let Some(path) = &assignment_path {
+                    // Extract the value from the assignment expression
+                    if let ExprKind::Assignment { value, .. } = &right.kind {
+                        let new_val = self.eval_expr(value)?;
+                        // Update using nested path
+                        if let Some(it_val) = self.env.get("@") {
+                            self.set_nested_path(&it_val, path, new_val)?;
+                        }
+                    }
+                    self.env.get("@").unwrap_or(other)
                 } else {
                     self.eval_expr(right)?
                 };
@@ -596,7 +703,7 @@ impl Interpreter {
                     if !params.is_empty() {
                         self.env.set(params[0].to_string(), item.clone());
                     }
-                    self.env.set("_it".to_string(), item.clone());
+                    self.env.set("@".to_string(), item.clone());
                     
                     let res = self.eval_expr(body)?;
                     
@@ -624,7 +731,7 @@ impl Interpreter {
                 if !params.is_empty() {
                     self.env.set(params[0].to_string(), other.clone());
                 }
-                self.env.set("_it".to_string(), other);
+                self.env.set("@".to_string(), other);
                 
                 let res = self.eval_expr(body)?;
                 self.env = (*old_env).clone();
@@ -633,19 +740,106 @@ impl Interpreter {
         }
     }
     
+    /// A segment in a path - either a field name or an array index
+    /// e.g., `.items[0].active` would be [Field("items"), Index(0), Field("active")]
+    
+    /// Count the number of pipe operations in a pipe chain
+    /// For `a | b | c`, this returns 2 (2 pipe operators, so 3 steps total)
+    /// Returns the number of pipe operators, not the total number of steps
+    fn count_pipe_operators(&self, expr: &Expr) -> usize {
+        match &expr.kind {
+            ExprKind::Pipe { left, .. } => {
+                1 + self.count_pipe_operators(left)
+            }
+            _ => 0,
+        }
+    }
+
+    /// Get a string representation of an expression for error messages
+    /// This is a simplified version - in a real implementation, you might want to
+    /// reconstruct the source from the span or store source text
+    fn expr_to_string(&self, expr: &Expr) -> String {
+        match &expr.kind {
+            ExprKind::Identifier(name) => name.to_string(),
+            ExprKind::Literal(val) => format!("{:?}", val),
+            ExprKind::FieldAccess { object, field } => {
+                format!("{}.{}", self.expr_to_string(object), field)
+            }
+            ExprKind::ArrayIndex { array, index } => {
+                format!("{}[{}]", self.expr_to_string(array), self.expr_to_string(index))
+            }
+            ExprKind::Call { name, .. } => format!("{}()", name),
+            ExprKind::Binary { left, op, right } => {
+                let op_str = match op {
+                    BinaryOp::Add => "+",
+                    BinaryOp::Sub => "-",
+                    BinaryOp::Mul => "*",
+                    BinaryOp::Div => "/",
+                    BinaryOp::Mod => "%",
+                    BinaryOp::Pow => "^",
+                    BinaryOp::Eq => "==",
+                    BinaryOp::NotEq => "!=",
+                    BinaryOp::Less => "<",
+                    BinaryOp::LessEq => "<=",
+                    BinaryOp::Greater => ">",
+                    BinaryOp::GreaterEq => ">=",
+                    BinaryOp::And => "&&",
+                    BinaryOp::Or => "||",
+                    BinaryOp::Pipe => "|",
+                };
+                format!("{} {} {}", self.expr_to_string(left), op_str, self.expr_to_string(right))
+            }
+            ExprKind::Pipe { left, right } => {
+                format!("{} | {}", self.expr_to_string(left), self.expr_to_string(right))
+            }
+            _ => "<expression>".to_string(),
+        }
+    }
+
+    /// Extract the field path from a nested field access expression starting from Null
+    /// e.g., `.profile.age` returns Some([Field("profile"), Field("age")])
+    /// e.g., `.items[0].active` returns Some([Field("items"), Index(0), Field("active")])
+    fn extract_path_segments(&self, expr: &Expr) -> Option<Vec<PathSegment>> {
+        let mut path = Vec::new();
+        let mut current = expr;
+        
+        loop {
+            match &current.kind {
+                ExprKind::FieldAccess { object, field } => {
+                    path.push(PathSegment::Field(field.clone()));
+                    current = object;
+                }
+                ExprKind::ArrayIndex { array, index } => {
+                    // Try to evaluate index as a constant number
+                    if let ExprKind::Literal(Value::Number(n, _)) = &index.kind {
+                        path.push(PathSegment::Index(*n as usize));
+                        current = array;
+                    } else {
+                        return None; // Non-constant index, can't handle statically
+                    }
+                }
+                ExprKind::Literal(Value::Null) => {
+                    // We've reached the root (short field access starting with `.`)
+                    path.reverse();
+                    return Some(path);
+                }
+                _ => return None, // Not a short field access chain
+            }
+        }
+    }
+    
+    
     /// Check if the expression is a mutation pattern in pipe context
-    /// Returns Some((field_name, op, value_expr)) for patterns like `.field + 2`
+    /// Returns Some((path_segments, op, value_expr)) for patterns like `.field + 2`, `.profile.age + 5`, or `.items[0] + 1`
     /// For assignments (.field = value), returns None but is handled separately
-    fn get_pipe_mutation_info(&self, expr: &Expr) -> Option<(String, BinaryOp, Expr)> {
-        // Check for binary ops like `.field + 2`, `.field * 3`, etc.
+    fn get_pipe_mutation_info(&self, expr: &Expr) -> Option<(Vec<PathSegment>, BinaryOp, Expr)> {
+        // Check for binary ops like `.field + 2`, `.profile.age * 3`, `.items[0] + 1`, etc.
         if let ExprKind::Binary { left, op, right } = &expr.kind {
             // Only treat arithmetic/string ops as mutations, not comparisons
             if matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod | BinaryOp::Pow) {
-                // Check if left is a short field access (.field where object is Null)
-                if let ExprKind::FieldAccess { object, field } = &left.kind {
-                    if matches!(object.kind, ExprKind::Literal(Value::Null)) {
-                        return Some((field.clone(), op.clone(), (**right).clone()));
-                    }
+                // Check if left is a short field/index access chain
+                if let Some(path) = self.extract_path_segments(left) {
+                    return Some((path, op.clone(), (**right).clone()));
                 }
             }
         }
@@ -653,15 +847,104 @@ impl Interpreter {
         None
     }
     
-    /// Check if the expression is an assignment on a short field access (.field = value)
-    fn is_pipe_assignment(&self, expr: &Expr) -> bool {
+    /// Check if the expression is an assignment on a short field access (.field = value, .profile.age = value, or .items[0] = value)
+    /// Returns the path segments if it's a pipe assignment
+    fn get_pipe_assignment_path(&self, expr: &Expr) -> Option<Vec<PathSegment>> {
         if let ExprKind::Assignment { target, .. } = &expr.kind {
-            if let ExprKind::FieldAccess { object, .. } = &target.kind {
-                return matches!(object.kind, ExprKind::Literal(Value::Null));
+            return self.extract_path_segments(target);
+        }
+        None
+    }
+    
+    /// Get a value at a nested path (fields and/or array indices) from an object
+    fn get_nested_path(&self, obj: &Value, path: &[PathSegment]) -> Result<Value, InterpreterError> {
+        if path.is_empty() {
+            return Ok(obj.clone());
+        }
+        
+        let mut current = obj.clone();
+        for segment in path {
+            current = match segment {
+                PathSegment::Field(field) => {
+                    self.get_field(&current, field)?
+                }
+                PathSegment::Index(idx) => {
+                    match current {
+                        Value::Array(items_rc) => {
+                            let items = items_rc.borrow();
+                            if *idx < items.len() {
+                                items[*idx].clone()
+                            } else {
+                                return Err(InterpreterError::index_out_of_bounds(*idx, items.len()));
+                            }
+                        }
+                        _ => return Err(InterpreterError::type_error("Cannot index non-array")),
+                    }
+                }
+            };
+        }
+        Ok(current)
+    }
+    
+    /// Set a value at a nested path (fields and/or array indices), modifying it in place
+    fn set_nested_path(&self, obj: &Value, path: &[PathSegment], value: Value) -> Result<(), InterpreterError> {
+        if path.is_empty() {
+            return Err(InterpreterError::invalid_operation("Cannot set empty path"));
+        }
+        
+        if path.len() == 1 {
+            // Single segment - set directly
+            match &path[0] {
+                PathSegment::Field(field) => {
+                    if let Value::Object(map_rc) = obj {
+                        map_rc.borrow_mut().insert(field.clone(), value);
+                        return Ok(());
+                    }
+                    return Err(InterpreterError::type_error("Cannot set field on non-object"));
+                }
+                PathSegment::Index(idx) => {
+                    if let Value::Array(items_rc) = obj {
+                        let mut items = items_rc.borrow_mut();
+                        if *idx < items.len() {
+                            items[*idx] = value;
+                            return Ok(());
+                        }
+                        return Err(InterpreterError::index_out_of_bounds(*idx, items.len()));
+                    }
+                    return Err(InterpreterError::type_error("Cannot index non-array"));
+                }
             }
         }
-        false
+        
+        // Navigate to the parent container, then set the final segment
+        let parent_path = &path[..path.len() - 1];
+        let current = self.get_nested_path(obj, parent_path)?;
+        
+        match &path[path.len() - 1] {
+            PathSegment::Field(field) => {
+                if let Value::Object(map_rc) = current {
+                    map_rc.borrow_mut().insert(field.clone(), value);
+                    Ok(())
+                } else {
+                    Err(InterpreterError::type_error("Cannot set field on non-object"))
+                }
+            }
+            PathSegment::Index(idx) => {
+                if let Value::Array(items_rc) = current {
+                    let mut items = items_rc.borrow_mut();
+                    if *idx < items.len() {
+                        items[*idx] = value;
+                        Ok(())
+                    } else {
+                        Err(InterpreterError::index_out_of_bounds(*idx, items.len()))
+                    }
+                } else {
+                    Err(InterpreterError::type_error("Cannot index non-array"))
+                }
+            }
+        }
     }
+    
 
     fn call_function_value(&mut self, func_val: &Value, call_args: &[Value]) -> Result<Value, InterpreterError> {
         if let Value::Function(func) = func_val {
@@ -686,12 +969,12 @@ impl Interpreter {
         }
         
         match name {
-            "count" => builtins::builtin_count(&args),
+            // Note: "count" has been removed - use .length property instead
             "sum" => builtins::builtin_sum(&args),
             "avg" => builtins::builtin_avg(&args),
             "min" => builtins::builtin_min(&args),
             "max" => builtins::builtin_max(&args),
-            "take" => builtins::builtin_take(&args),
+            // Note: "take" has been removed - use slice(arr, 0, n) instead
             "push" => builtins::builtin_push(&args),
             "input" => builtins::builtin_input(&args),
             "print" => builtins::builtin_print(&args, |v| self.value_to_string(v)),
@@ -711,7 +994,7 @@ impl Interpreter {
             "pop" => builtins::builtin_pop(&args),
             "shift" => builtins::builtin_shift(&args),
             "flat" => builtins::builtin_flat(&args),
-            "flatten" => builtins::builtin_flatten(&args),
+            // Note: "flatten" has been removed - use "flat" instead
             "zip" => builtins::builtin_zip(&args),
             "first" => builtins::builtin_first(&args),
             "last" => builtins::builtin_last(&args),
@@ -840,8 +1123,8 @@ impl Interpreter {
                 }
             }
             Value::Null => {
-                // First try _it (for pipe context)
-                if let Some(it) = self.env.get("_it") {
+                // First try @ (for pipe context)
+                if let Some(it) = self.env.get("@") {
                     if let Value::Object(map) = it {
                         return map.borrow().get(field).cloned()
                             .ok_or_else(|| InterpreterError::field_not_found(field));
@@ -1208,8 +1491,8 @@ mod tests {
     }
 
     #[test]
-    fn test_count_function() {
-        let source = "count(root.users);";
+    fn test_array_length_property() {
+        let source = "root.users.length;";
         let root = make_test_root();
         let result = parse_and_run(source, root).unwrap();
         assert_eq!(result, Some(Value::Number(3.0, false)));

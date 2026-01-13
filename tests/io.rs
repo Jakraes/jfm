@@ -143,7 +143,7 @@ fn test_print_expression_result() {
 fn test_print_function_result() {
     let source = r#"
         let arr = [1, 2, 3, 4, 5];
-        print("Count:", count(arr), "Sum:", sum(arr), "Avg:", avg(arr));
+        print("Length:", arr.length, "Sum:", sum(arr), "Avg:", avg(arr));
         null;
     "#;
     let root = Value::Null;

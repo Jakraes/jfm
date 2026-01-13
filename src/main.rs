@@ -560,3 +560,4 @@ fn error_message(config: &AppConfig, message: &str) {
         eprintln!("{}", message);
     }
 }
+

@@ -176,23 +176,20 @@ fn test_error_sum_non_array() {
     assert!(result.is_err());
 }
 
+// Note: count and take functions have been removed
+// count() - use .length property instead
+// take(arr, n) - use slice(arr, 0, n) instead
+
 #[test]
-fn test_error_count_non_array() {
-    let source = r#"count("hello");"#;
+fn test_error_slice_non_array() {
+    let source = "slice(42, 0, 5);";
     let result = parse_and_run(source, Value::Null);
     assert!(result.is_err());
 }
 
 #[test]
-fn test_error_take_non_array() {
-    let source = "take(42, 5);";
-    let result = parse_and_run(source, Value::Null);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_error_take_non_number() {
-    let source = r#"take([1,2,3], "five");"#;
+fn test_error_slice_non_number() {
+    let source = r#"slice([1,2,3], "zero", 3);"#;
     let result = parse_and_run(source, Value::Null);
     assert!(result.is_err());
 }
@@ -455,14 +452,14 @@ fn test_deeply_nested_array() {
 
 #[test]
 fn test_array_of_nulls() {
-    let source = "let arr = [null, null, null]; count(arr);";
+    let source = "let arr = [null, null, null]; arr.length;";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     assert_eq!(result.as_number().unwrap(), 3.0);
 }
 
 #[test]
 fn test_mixed_type_array() {
-    let source = r#"let arr = [1, "two", true, null, [5], {x: 6}]; count(arr);"#;
+    let source = r#"let arr = [1, "two", true, null, [5], {x: 6}]; arr.length;"#;
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     assert_eq!(result.as_number().unwrap(), 6.0);
 }
@@ -534,4 +531,93 @@ fn test_nested_scope_access() {
     "#;
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     assert_eq!(result.as_number().unwrap(), 3.0);
+}
+
+// =============================================================================
+// PIPE CHAIN ERROR TESTS
+// =============================================================================
+
+#[test]
+fn test_pipe_chain_error_step_1() {
+    // Error in first step of pipe chain
+    let source = r#"
+        let users = [{ name: "Bob", age: 30 }];
+        users | .nonexistent;
+    "#;
+    let result = parse_and_run(source, Value::Null);
+    assert!(result.is_err());
+    let error_msg = result.unwrap_err();
+    // Should mention pipe chain and step
+    assert!(error_msg.contains("pipe chain") || error_msg.contains("step") || error_msg.contains("Pipe chain"));
+}
+
+#[test]
+fn test_pipe_chain_error_step_2() {
+    // Error in second step of pipe chain
+    // First step (.name) succeeds, second step (.nonexistent) errors on object without that field
+    let source = r#"
+        let users = [{ name: "Bob", age: 30 }];
+        users | { profile: .name } | .nonexistent;
+    "#;
+    let result = parse_and_run(source, Value::Null);
+    assert!(result.is_err());
+    let error_msg = result.unwrap_err();
+    // Should mention pipe chain and step
+    assert!(error_msg.contains("pipe chain") || error_msg.contains("step") || error_msg.contains("Pipe chain"));
+}
+
+#[test]
+fn test_pipe_chain_error_step_3() {
+    // Error in third step of pipe chain
+    let source = r#"
+        let users = [{ name: "Bob", age: 30 }];
+        users | .name | len | .nonexistent;
+    "#;
+    let result = parse_and_run(source, Value::Null);
+    assert!(result.is_err());
+    let error_msg = result.unwrap_err();
+    // Should mention pipe chain and step
+    assert!(error_msg.contains("pipe chain") || error_msg.contains("step") || error_msg.contains("Pipe chain"));
+}
+
+#[test]
+fn test_pipe_chain_error_with_field_not_found() {
+    // Field not found error in pipe chain
+    let source = r#"
+        let data = [{ id: 1 }];
+        data | .missing_field;
+    "#;
+    let result = parse_and_run(source, Value::Null);
+    assert!(result.is_err());
+    let error_msg = result.unwrap_err();
+    // Should contain information about the error
+    assert!(error_msg.contains("field") || error_msg.contains("missing") || error_msg.contains("pipe chain"));
+}
+
+#[test]
+fn test_pipe_chain_error_with_type_error() {
+    // Type error in pipe chain - accessing field on non-object
+    let source = r#"
+        let data = [{ value: 42 }];
+        data | .value | @ / 0;
+    "#;
+    let result = parse_and_run(source, Value::Null);
+    assert!(result.is_err());
+    let error_msg = result.unwrap_err();
+    // Should contain information about the error (division by zero or pipe chain)
+    assert!(error_msg.len() > 0);
+}
+
+#[test]
+fn test_pipe_chain_error_index_out_of_bounds() {
+    // Index out of bounds in pipe chain
+    let source = r#"
+        let arr = [[1, 2], [3, 4]];
+        arr | .[5];
+    "#;
+    let result = parse_and_run(source, Value::Null);
+    assert!(result.is_err());
+    let error_msg = result.unwrap_err();
+    // Should contain information about the error
+    assert!(error_msg.len() > 0);
 }

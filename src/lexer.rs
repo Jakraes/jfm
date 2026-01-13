@@ -27,6 +27,7 @@ pub enum Token {
     True,
     False,
     Null,
+    At,  // @ - pipe context variable
 
     Plus,
     Minus,
@@ -449,6 +450,7 @@ pub fn lexer<'a>()
         just('}').to(Token::RBrace),
         just('[').to(Token::LBracket),
         just(']').to(Token::RBracket),
+        just('@').to(Token::At),
     ));
 
     let op = op_binary.or(op_single);

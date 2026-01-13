@@ -176,10 +176,21 @@ The pipe operator `|` is the primary way to transform data. It automatically han
 .users | .age * 2                // Double everyone's age, return modified users
 .users | .salary + 1000          // Give everyone a raise
 
+// Nested field mutations (new!)
+.users | .profile.age + 5        // Add 5 to nested profile.age
+.users | .profile.name = "New"   // Set nested field value
+.users | .items[0] = "first"     // Set array element
+.users | .items[0].active = true // Set nested array element field
+
 // Lambda: use named parameters for complex transforms
 .users | x => x.name             // Map with named param
 .users | x => x.age > 25         // Filter with named param (returns bool)
 .users | x => x.a + x.b          // Complex expression
+
+// The @ variable: explicit reference to current item
+.numbers | @ > 5                 // Filter numbers > 5 (using @)
+.numbers | @ * 2                 // Double each number
+.users | @.age > 25 && @.active  // Complex filter using @
 
 // Chaining: combine operations
 .users | .age > 25 | .name       // Filter adults, then get names
@@ -201,7 +212,7 @@ let greeting = `Hello, ${user.name}!`;
 let info = `${user.name} is ${user.age} years old`;
 
 // Expressions in interpolation
-let summary = `Found ${count(items)} items totaling $${sum(items | .price)}`;
+let summary = `Found ${items.length} items totaling $${sum(items | .price)}`;
 let result = `Status: ${active ? "ON" : "OFF"}`;
 
 // Multi-line strings
@@ -224,14 +235,15 @@ let html = `
 
 ### Array
 
+**Properties:**
+- `arr.length` - Array length: `[1,2,3].length` → 3
+
 | Function | Description | Example |
 |----------|-------------|---------|
-| `count(arr)` | Array length | `count([1,2,3])` → 3 |
 | `sum(arr)` | Sum numbers | `sum([1,2,3])` → 6 |
 | `avg(arr)` | Average | `avg([1,2,3])` → 2 |
 | `min(arr)` | Minimum | `min([3,1,2])` → 1 |
 | `max(arr)` | Maximum | `max([1,3,2])` → 3 |
-| `take(arr, n)` | First n items | `take([1,2,3], 2)` → [1,2] |
 | `unique(arr)` | Remove duplicates | `unique([1,1,2])` → [1,2] |
 | `sort(arr)` | Sort primitives | `sort([3,1,2])` → [1,2,3] |
 | `sort_by(arr, field)` | Sort by field | `sort_by(users, "age")` |
@@ -363,7 +375,7 @@ let y = { bar: 2 };
 .users | .salary * 1.1           // Give everyone 10% raise
 
 // Get top 3 by score
-take(sort_by(.users, "score"), 3)
+slice(sort_by(.users, "score"), 0, 3)
 
 // Group by department
 group_by(.employees, "department")
@@ -377,7 +389,7 @@ group_by(.employees, "department")
 ```jfm
 let ages = .users | .age;
 {
-    "count": count(ages),
+    "length": ages.length,
     "avg": avg(ages),
     "min": min(ages),
     "max": max(ages)
@@ -473,7 +485,7 @@ set_path({}, "config.db.host", "localhost")
 // { config: { db: { host: "localhost" } } }
 
 // Enumerate for index access
-enumerate(["a", "b", "c"]) | map(pair => `${pair[0]}: ${pair[1]}`)
+enumerate(["a", "b", "c"]) | x => `${x[0]}: ${x[1]}`
 // ["0: a", "1: b", "2: c"]
 ```
 

@@ -8,6 +8,7 @@ pub enum InterpreterError {
     FieldNotFound { field: String, span: Span },
     DivisionByZero { span: Span },
     InvalidOperation { message: String, span: Span },
+    PipeChainError { step: usize, step_source: String, inner: Box<InterpreterError>, span: Span },
 }
 
 impl InterpreterError {
@@ -59,6 +60,15 @@ impl InterpreterError {
         Self::InvalidOperation { message: message.into(), span }
     }
 
+    pub fn pipe_chain_error_at(step: usize, step_source: impl Into<String>, inner: InterpreterError, span: Span) -> Self {
+        Self::PipeChainError {
+            step,
+            step_source: step_source.into(),
+            inner: Box::new(inner),
+            span,
+        }
+    }
+
     pub fn span(&self) -> Span {
         match self {
             Self::UndefinedVariable { span, .. } => *span,
@@ -67,6 +77,7 @@ impl InterpreterError {
             Self::FieldNotFound { span, .. } => *span,
             Self::DivisionByZero { span } => *span,
             Self::InvalidOperation { span, .. } => *span,
+            Self::PipeChainError { span, .. } => *span,
         }
     }
 
@@ -102,6 +113,13 @@ impl InterpreterError {
                     .with_code("E0206")
                     .with_label(Label::primary(*span, ""))
             }
+            Self::PipeChainError { step, step_source, inner, span } => {
+                Diagnostic::error(format!("pipe chain failed at step {}", step))
+                    .with_code("E0207")
+                    .with_label(Label::primary(*span, format!("error occurred in step {}: {}", step, step_source)))
+                    .with_note(format!("{}", inner))
+                    .with_note(format!("failing expression: {}", step_source))
+            }
         }
     }
 }
@@ -121,6 +139,9 @@ impl std::fmt::Display for InterpreterError {
             }
             InterpreterError::DivisionByZero { .. } => write!(f, "Division by zero"),
             InterpreterError::InvalidOperation { message, .. } => write!(f, "Invalid operation: {}", message),
+            InterpreterError::PipeChainError { step, step_source, inner, .. } => {
+                write!(f, "Pipe chain failed at step {} (in `{}`): {}", step, step_source, inner)
+            }
         }
     }
 }

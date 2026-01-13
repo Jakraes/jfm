@@ -102,10 +102,10 @@ fn test_template_with_arithmetic() {
 
 #[test]
 fn test_template_with_function_call() {
-    let source = "let arr = [1, 2, 3]; `Count: ${count(arr)}`;";
+    let source = "let arr = [1, 2, 3]; `Length: ${arr.length}`;";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     if let Value::String(s) = result {
-        assert_eq!(s.as_ref(), "Count: 3");
+        assert_eq!(s.as_ref(), "Length: 3");
     } else {
         panic!("Expected string");
     }

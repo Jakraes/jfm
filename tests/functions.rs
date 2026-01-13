@@ -43,43 +43,43 @@ fn make_user_array() -> Value {
 }
 
 // =============================================================================
-// COUNT FUNCTION TESTS
+// ARRAY LENGTH TESTS (replaces count function)
 // =============================================================================
 
 #[test]
-fn test_count_basic() {
+fn test_length_basic() {
     let root = make_test_array();
-    let result = parse_and_run("count(root.numbers);", root).unwrap().unwrap();
+    let result = parse_and_run("root.numbers.length;", root).unwrap().unwrap();
     assert_eq!(result.as_number().unwrap(), 6.0);
 }
 
 #[test]
-fn test_count_empty_array() {
-    let source = "count([]);";
+fn test_length_empty_array() {
+    let source = "[].length;";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     assert_eq!(result.as_number().unwrap(), 0.0);
 }
 
 #[test]
-fn test_count_single_element() {
-    let source = "count([42]);";
+fn test_length_single_element() {
+    let source = "[42].length;";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     assert_eq!(result.as_number().unwrap(), 1.0);
 }
 
 #[test]
-fn test_count_with_filter() {
+fn test_length_with_filter() {
     let root = make_test_array();
-    let source = "count(root.numbers | _it > 5);";
+    let source = "(root.numbers | @ > 5).length;";
     let result = parse_and_run(source, root).unwrap().unwrap();
     assert_eq!(result.as_number().unwrap(), 2.0); // 8 and 9
 }
 
 #[test]
-fn test_count_no_args() {
-    let source = "count();";
+fn test_length_inline_array() {
+    let source = "[1, 2, 3, 4, 5].length;";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    assert_eq!(result.as_number().unwrap(), 0.0);
+    assert_eq!(result.as_number().unwrap(), 5.0);
 }
 
 // =============================================================================
@@ -226,13 +226,13 @@ fn test_max_all_same() {
 }
 
 // =============================================================================
-// TAKE FUNCTION TESTS
+// SLICE FUNCTION TESTS (replaces take function - use slice(arr, 0, n))
 // =============================================================================
 
 #[test]
-fn test_take_basic() {
+fn test_slice_take_basic() {
     let root = make_test_array();
-    let result = parse_and_run("take(root.numbers, 3);", root).unwrap().unwrap();
+    let result = parse_and_run("slice(root.numbers, 0, 3);", root).unwrap().unwrap();
     let arr = result.as_array().unwrap();
     assert_eq!(arr.len(), 3);
     assert_eq!(arr[0].as_number().unwrap(), 5.0);
@@ -240,24 +240,24 @@ fn test_take_basic() {
 }
 
 #[test]
-fn test_take_zero() {
-    let source = "take([1, 2, 3], 0);";
+fn test_slice_take_zero() {
+    let source = "slice([1, 2, 3], 0, 0);";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     let arr = result.as_array().unwrap();
     assert_eq!(arr.len(), 0);
 }
 
 #[test]
-fn test_take_more_than_length() {
-    let source = "take([1, 2, 3], 10);";
+fn test_slice_take_more_than_length() {
+    let source = "slice([1, 2, 3], 0, 10);";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     let arr = result.as_array().unwrap();
     assert_eq!(arr.len(), 3);
 }
 
 #[test]
-fn test_take_one() {
-    let source = "take([1, 2, 3], 1);";
+fn test_slice_take_one() {
+    let source = "slice([1, 2, 3], 0, 1);";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     let arr = result.as_array().unwrap();
     assert_eq!(arr.len(), 1);
@@ -377,7 +377,7 @@ fn test_sort_by_string_field() {
 #[test]
 fn test_sort_by_preserves_all() {
     let root = make_user_array();
-    let source = r#"count(sort_by(root.users, "age"));"#;
+    let source = r#"sort_by(root.users, "age").length;"#;
     let result = parse_and_run(source, root).unwrap().unwrap();
     assert_eq!(result.as_number().unwrap(), 5.0);
 }
@@ -400,7 +400,7 @@ fn test_group_by_counts() {
     let root = make_user_array();
     let source = r#"
         let groups = group_by(root.users, "department");
-        count(groups.Engineering);
+        groups.Engineering.length;
     "#;
     let result = parse_and_run(source, root).unwrap().unwrap();
     assert_eq!(result.as_number().unwrap(), 2.0); // Alice and Charlie
@@ -456,23 +456,23 @@ fn test_print_complex_types() {
 #[test]
 fn test_sum_of_filtered() {
     let root = make_test_array();
-    let source = "sum(root.numbers | _it > 5);";
+    let source = "sum(root.numbers | @ > 5);";
     let result = parse_and_run(source, root).unwrap().unwrap();
     assert_eq!(result.as_number().unwrap(), 17.0); // 8 + 9
 }
 
 #[test]
-fn test_avg_of_sorted() {
+fn test_avg_of_sliced() {
     let root = make_test_array();
-    let source = "avg(take(root.numbers, 3));";
+    let source = "avg(slice(root.numbers, 0, 3));";
     let result = parse_and_run(source, root).unwrap().unwrap();
     let expected = (5.0 + 3.0 + 8.0) / 3.0;
     assert!((result.as_number().unwrap() - expected).abs() < 0.001);
 }
 
 #[test]
-fn test_count_unique() {
-    let source = "count(unique([1, 1, 2, 2, 3, 3, 4]));";
+fn test_unique_length() {
+    let source = "unique([1, 1, 2, 2, 3, 3, 4]).length;";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     assert_eq!(result.as_number().unwrap(), 4.0);
 }

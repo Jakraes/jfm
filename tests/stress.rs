@@ -90,9 +90,9 @@ fn test_stress_avg_5000_ages() {
 }
 
 #[test]
-fn test_stress_count_large_array() {
+fn test_stress_length_large_array() {
     let root = make_large_dataset(10000);
-    let source = "count(root.users);";
+    let source = "root.users.length;";
     let result = parse_and_run(source, root).unwrap().unwrap();
     assert_eq!(result.as_number().unwrap(), 10000.0);
 }
@@ -135,9 +135,9 @@ fn test_stress_unique_large_array() {
 }
 
 #[test]
-fn test_stress_take_from_large_array() {
+fn test_stress_slice_from_large_array() {
     let root = make_large_dataset(5000);
-    let source = "take(root.users, 100);";
+    let source = "slice(root.users, 0, 100);";
     let result = parse_and_run(source, root).unwrap().unwrap();
     let arr = result.as_array().unwrap();
     assert_eq!(arr.len(), 100);
@@ -173,7 +173,7 @@ fn test_stress_range_sum() {
 
 #[test]
 fn test_stress_range_filter() {
-    let source = "1..1000 | _it % 2 == 0;";
+    let source = "1..1000 | @ % 2 == 0;";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     let arr = result.as_array().unwrap();
     assert_eq!(arr.len(), 500, "Should have 500 even numbers");
@@ -240,9 +240,9 @@ fn test_stress_chained_filters() {
 }
 
 #[test]
-fn test_stress_filter_sort_take() {
+fn test_stress_filter_sort_slice() {
     let root = make_large_dataset(1000);
-    let source = r#"take(sort_by(root.users | .active == true, "score"), 10);"#;
+    let source = r#"slice(sort_by(root.users | .active == true, "score"), 0, 10);"#;
     let result = parse_and_run(source, root).unwrap().unwrap();
     let arr = result.as_array().unwrap();
     assert_eq!(arr.len(), 10);
@@ -256,7 +256,7 @@ fn test_stress_complex_aggregation() {
         let ages = active | .age;
         let scores = active | .score;
         let result = {
-            "count": count(active),
+            "length": active.length,
             "avg_age": avg(ages),
             "total_score": sum(scores),
             "max_score": max(scores),
@@ -266,7 +266,7 @@ fn test_stress_complex_aggregation() {
     "#;
     let result = parse_and_run(source, root).unwrap().unwrap();
     let obj = result.as_object().unwrap();
-    assert_eq!(obj.get("count").unwrap().as_number().unwrap(), 500.0);
+    assert_eq!(obj.get("length").unwrap().as_number().unwrap(), 500.0);
 }
 
 // =============================================================================
@@ -280,7 +280,7 @@ fn test_stress_large_array_creation() {
         for i in 0..999 {
             arr = push(arr, {"id": i, "value": i * 2});
         }
-        count(arr);
+        arr.length;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     // 0..999 gives 1000 elements
@@ -308,7 +308,7 @@ fn test_stress_array_concatenation() {
         for i in 0..99 {
             arr = arr + [i];
         }
-        count(arr);
+        arr.length;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     // 0..99 gives 100 elements
@@ -369,7 +369,7 @@ fn test_stress_many_conditionals() {
                 results = push(results, "elder");
             }
         }
-        count(results);
+        results.length;
     "#;
     let result = parse_and_run(source, root).unwrap().unwrap();
     assert_eq!(result.as_number().unwrap(), 1000.0);

@@ -145,7 +145,7 @@ fn test_large_range_array() {
 #[test]
 fn test_complex_pipe_chain() {
     let source = r#"
-        take(sort_by(root.users, "prb"), 2);
+        slice(sort_by(root.users, "prb"), 0, 2);
     "#;
     let root = make_complex_root();
     let result = parse_and_run(source, root).unwrap().unwrap();

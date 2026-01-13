@@ -95,7 +95,7 @@ fn test_include_script_with_arithmetic() {
 #[test]
 fn test_include_script_accessing_root() {
     // Create a script that accesses the root variable
-    let script = TempScript::new("root_access", "let users = root.users; count(users);").unwrap();
+    let script = TempScript::new("root_access", "let users = root.users; users.length;").unwrap();
     
     let source = format!(r#"let user_count = include("{}"); user_count;"#, script.path());
     let root = make_test_root();
@@ -152,8 +152,8 @@ fn test_include_script_returning_object() {
 fn test_include_script_with_filter() {
     // Create a script that filters data
     let script = TempScript::new("filter_users", "root.users | .age > 28;").unwrap();
-    
-    let source = format!(r#"let adults = include("{}"); count(adults);"#, script.path());
+
+    let source = format!(r#"let adults = include("{}"); adults.length;"#, script.path());
     let root = make_test_root();
     
     let result = parse_and_run(&source, root).unwrap().unwrap();
@@ -229,7 +229,7 @@ fn test_include_script_with_for_loop() {
 fn test_include_script_with_if_else() {
     // Create a script that uses if-else
     let script = TempScript::new("if_else", r#"
-        let user_count = count(root.users);
+        let user_count = root.users.length;
         let result = "";
         if user_count > 2 {
             result = "many";
