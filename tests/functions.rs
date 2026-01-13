@@ -492,3 +492,651 @@ fn test_min_of_mapped() {
     let result = parse_and_run(source, root).unwrap().unwrap();
     assert_eq!(result.as_number().unwrap(), 25.0);
 }
+
+// =============================================================================
+// REVERSE FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_reverse_basic() {
+    let source = "reverse([1, 2, 3]);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 3);
+    assert_eq!(arr[0].as_number().unwrap(), 3.0);
+    assert_eq!(arr[2].as_number().unwrap(), 1.0);
+}
+
+#[test]
+fn test_reverse_empty() {
+    let source = "reverse([]);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 0);
+}
+
+#[test]
+fn test_reverse_single() {
+    let source = "reverse([42]);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0].as_number().unwrap(), 42.0);
+}
+
+// =============================================================================
+// SORT FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_sort_numbers() {
+    let source = "sort([3, 1, 4, 1, 5]);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 5);
+    assert_eq!(arr[0].as_number().unwrap(), 1.0);
+    assert_eq!(arr[4].as_number().unwrap(), 5.0);
+}
+
+#[test]
+fn test_sort_strings() {
+    let source = r#"sort(["zebra", "apple", "banana"]);"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr[0].as_string().unwrap(), "apple");
+    assert_eq!(arr[2].as_string().unwrap(), "zebra");
+}
+
+// =============================================================================
+// SLICE FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_slice_basic() {
+    let source = "slice([1, 2, 3, 4, 5], 1, 4);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 3);
+    assert_eq!(arr[0].as_number().unwrap(), 2.0);
+    assert_eq!(arr[2].as_number().unwrap(), 4.0);
+}
+
+#[test]
+fn test_slice_no_end() {
+    let source = "slice([1, 2, 3, 4, 5], 2);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 3);
+}
+
+#[test]
+fn test_slice_negative() {
+    let source = "slice([1, 2, 3, 4, 5], -2);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 2);
+}
+
+// =============================================================================
+// POP FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_pop_basic() {
+    let source = "let arr = [1, 2, 3]; pop(arr);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 3.0);
+}
+
+#[test]
+fn test_pop_empty() {
+    let source = "let arr = []; pop(arr);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert!(matches!(result, Value::Null));
+}
+
+// =============================================================================
+// SHIFT FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_shift_basic() {
+    let source = "let arr = [1, 2, 3]; shift(arr);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 1.0);
+}
+
+#[test]
+fn test_shift_empty() {
+    let source = "let arr = []; shift(arr);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert!(matches!(result, Value::Null));
+}
+
+// =============================================================================
+// FLAT FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_flat_basic() {
+    let source = "flat([[1, 2], [3, 4]]);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 4);
+}
+
+#[test]
+fn test_flat_nested() {
+    let source = "flat([[[1]], [[2]]], 2);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 2);
+}
+
+// =============================================================================
+// FIND FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_find_basic() {
+    let source = "find([1, 2, 3, 4, 5], x => x > 3);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 4.0);
+}
+
+#[test]
+fn test_find_not_found() {
+    let source = "find([1, 2, 3], x => x > 10);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert!(matches!(result, Value::Null));
+}
+
+// =============================================================================
+// FIND_INDEX FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_find_index_basic() {
+    let source = "find_index([1, 2, 3, 4, 5], x => x > 3);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 3.0);
+}
+
+#[test]
+fn test_find_index_not_found() {
+    let source = "find_index([1, 2, 3], x => x > 10);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), -1.0);
+}
+
+// =============================================================================
+// REDUCE FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_reduce_sum() {
+    let source = "reduce([1, 2, 3, 4], (acc, val) => acc + val, 0);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 10.0);
+}
+
+#[test]
+fn test_reduce_product() {
+    let source = "reduce([2, 3, 4], (acc, val) => acc * val, 1);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 24.0);
+}
+
+// =============================================================================
+// EVERY FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_every_true() {
+    let source = "every([2, 4, 6], x => x % 2 == 0);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), true);
+}
+
+#[test]
+fn test_every_false() {
+    let source = "every([2, 4, 5], x => x % 2 == 0);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), false);
+}
+
+#[test]
+fn test_every_empty() {
+    let source = "every([], x => x > 0);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), true);
+}
+
+// =============================================================================
+// SOME FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_some_true() {
+    let source = "some([1, 2, 3], x => x > 2);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), true);
+}
+
+#[test]
+fn test_some_false() {
+    let source = "some([1, 2, 3], x => x > 10);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), false);
+}
+
+// =============================================================================
+// ZIP FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_zip_basic() {
+    let source = "zip([1, 2, 3], [4, 5, 6]);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 3);
+    let first_pair = arr[0].as_array().unwrap();
+    assert_eq!(first_pair[0].as_number().unwrap(), 1.0);
+    assert_eq!(first_pair[1].as_number().unwrap(), 4.0);
+}
+
+#[test]
+fn test_zip_different_lengths() {
+    let source = "zip([1, 2], [3, 4, 5]);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 2);
+}
+
+// =============================================================================
+// FIRST AND LAST FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_first_basic() {
+    let source = "first([1, 2, 3]);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 1.0);
+}
+
+#[test]
+fn test_first_empty() {
+    let source = "first([]);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert!(matches!(result, Value::Null));
+}
+
+#[test]
+fn test_last_basic() {
+    let source = "last([1, 2, 3]);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 3.0);
+}
+
+#[test]
+fn test_last_empty() {
+    let source = "last([]);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert!(matches!(result, Value::Null));
+}
+
+// =============================================================================
+// STRING FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_split_basic() {
+    let source = r#"split("a,b,c", ",");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 3);
+    assert_eq!(arr[0].as_string().unwrap(), "a");
+}
+
+#[test]
+fn test_join_basic() {
+    let source = r#"join(["a", "b", "c"], ",");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_string().unwrap(), "a,b,c");
+}
+
+#[test]
+fn test_trim_basic() {
+    let source = r#"trim("  hello  ");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_string().unwrap(), "hello");
+}
+
+#[test]
+fn test_upper_basic() {
+    let source = r#"upper("hello");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_string().unwrap(), "HELLO");
+}
+
+#[test]
+fn test_lower_basic() {
+    let source = r#"lower("HELLO");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_string().unwrap(), "hello");
+}
+
+#[test]
+fn test_contains_true() {
+    let source = r#"contains("hello world", "world");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), true);
+}
+
+#[test]
+fn test_contains_false() {
+    let source = r#"contains("hello", "xyz");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), false);
+}
+
+#[test]
+fn test_starts_with_true() {
+    let source = r#"starts_with("hello", "he");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), true);
+}
+
+#[test]
+fn test_starts_with_false() {
+    let source = r#"starts_with("hello", "lo");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), false);
+}
+
+#[test]
+fn test_ends_with_true() {
+    let source = r#"ends_with("hello", "lo");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), true);
+}
+
+#[test]
+fn test_ends_with_false() {
+    let source = r#"ends_with("hello", "he");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), false);
+}
+
+#[test]
+fn test_replace_basic() {
+    let source = r#"replace("hello world", "world", "rust");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_string().unwrap(), "hello rust");
+}
+
+#[test]
+fn test_len_basic() {
+    let source = r#"len("hello");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 5.0);
+}
+
+// =============================================================================
+// OBJECT FUNCTION TESTS
+// =============================================================================
+
+fn make_test_object() -> Value {
+    let mut obj = IndexMap::new();
+    obj.insert("name".to_string(), Value::String(Rc::from("Alice")));
+    obj.insert("age".to_string(), Value::Number(30.0));
+    obj.insert("active".to_string(), Value::Bool(true));
+    Value::Object(Rc::new(RefCell::new(obj)))
+}
+
+#[test]
+fn test_keys_basic() {
+    let root = make_test_object();
+    let source = "keys(root);";
+    let result = parse_and_run(source, root).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 3);
+}
+
+#[test]
+fn test_values_basic() {
+    let root = make_test_object();
+    let source = "values(root);";
+    let result = parse_and_run(source, root).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 3);
+}
+
+#[test]
+fn test_entries_basic() {
+    let root = make_test_object();
+    let source = "entries(root);";
+    let result = parse_and_run(source, root).unwrap().unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 3);
+    let first_entry = arr[0].as_array().unwrap();
+    assert_eq!(first_entry.len(), 2);
+}
+
+#[test]
+fn test_has_true() {
+    let root = make_test_object();
+    let source = r#"has(root, "name");"#;
+    let result = parse_and_run(source, root).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), true);
+}
+
+#[test]
+fn test_has_false() {
+    let root = make_test_object();
+    let source = r#"has(root, "missing");"#;
+    let result = parse_and_run(source, root).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), false);
+}
+
+#[test]
+fn test_merge_basic() {
+    let source = r#"merge({"a": 1, "b": 2}, {"b": 3, "c": 4});"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let obj = result.as_object().unwrap();
+    assert_eq!(obj.get("a").unwrap().as_number().unwrap(), 1.0);
+    assert_eq!(obj.get("b").unwrap().as_number().unwrap(), 3.0);
+    assert_eq!(obj.get("c").unwrap().as_number().unwrap(), 4.0);
+}
+
+// =============================================================================
+// TYPE FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_typeof_number() {
+    let source = "typeof(42);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_string().unwrap(), "number");
+}
+
+#[test]
+fn test_typeof_string() {
+    let source = r#"typeof("hello");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_string().unwrap(), "string");
+}
+
+#[test]
+fn test_typeof_array() {
+    let source = "typeof([1, 2, 3]);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_string().unwrap(), "array");
+}
+
+#[test]
+fn test_is_null_true() {
+    let source = "is_null(null);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), true);
+}
+
+#[test]
+fn test_is_null_false() {
+    let source = "is_null(42);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), false);
+}
+
+#[test]
+fn test_is_array_true() {
+    let source = "is_array([1, 2, 3]);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), true);
+}
+
+#[test]
+fn test_is_array_false() {
+    let source = "is_array(42);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), false);
+}
+
+#[test]
+fn test_is_object_true() {
+    let source = r#"is_object({"key": "value"});"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), true);
+}
+
+#[test]
+fn test_is_string_true() {
+    let source = r#"is_string("hello");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), true);
+}
+
+#[test]
+fn test_is_number_true() {
+    let source = "is_number(42);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), true);
+}
+
+#[test]
+fn test_is_bool_true() {
+    let source = "is_bool(true);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_bool().unwrap(), true);
+}
+
+#[test]
+fn test_to_string_number() {
+    let source = "to_string(42);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_string().unwrap(), "42");
+}
+
+#[test]
+fn test_to_number_string() {
+    let source = r#"to_number("42");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 42.0);
+}
+
+#[test]
+fn test_to_number_already_number() {
+    let source = "to_number(42);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 42.0);
+}
+
+#[test]
+fn test_parse_json_basic() {
+    let source = r#"parse_json("{\"key\": \"value\"}");"#;
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let obj = result.as_object().unwrap();
+    assert_eq!(obj.get("key").unwrap().as_string().unwrap(), "value");
+}
+
+// =============================================================================
+// MATH FUNCTION TESTS
+// =============================================================================
+
+#[test]
+fn test_floor_basic() {
+    let source = "floor(3.7);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 3.0);
+}
+
+#[test]
+fn test_ceil_basic() {
+    let source = "ceil(3.2);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 4.0);
+}
+
+#[test]
+fn test_round_basic() {
+    let source = "round(3.5);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 4.0);
+}
+
+#[test]
+fn test_abs_positive() {
+    let source = "abs(5);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 5.0);
+}
+
+#[test]
+fn test_abs_negative() {
+    let source = "abs(-5);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 5.0);
+}
+
+#[test]
+fn test_sqrt_basic() {
+    let source = "sqrt(16);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 4.0);
+}
+
+#[test]
+fn test_pow_basic() {
+    let source = "pow(2, 3);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result.as_number().unwrap(), 8.0);
+}
+
+#[test]
+fn test_sin_basic() {
+    let source = "sin(0);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert!((result.as_number().unwrap() - 0.0).abs() < 0.001);
+}
+
+#[test]
+fn test_cos_basic() {
+    let source = "cos(0);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert!((result.as_number().unwrap() - 1.0).abs() < 0.001);
+}
+
+#[test]
+fn test_tan_basic() {
+    let source = "tan(0);";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert!((result.as_number().unwrap() - 0.0).abs() < 0.001);
+}
+
+#[test]
+fn test_random_range() {
+    let source = "random();";
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    let num = result.as_number().unwrap();
+    assert!(num >= 0.0 && num < 1.0);
+}

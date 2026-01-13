@@ -394,7 +394,26 @@ impl Interpreter {
         }
     }
 
+    fn call_function_value(&mut self, func_val: &Value, call_args: &[Value]) -> Result<Value, InterpreterError> {
+        if let Value::Function(func) = func_val {
+            self.call_user_function(func, call_args.to_vec())
+        } else {
+            Err(InterpreterError::TypeError("Expected function value".to_string()))
+        }
+    }
+
     fn call_function(&mut self, name: &str, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if matches!(name, "find" | "find_index" | "reduce" | "every" | "some") {
+            return match name {
+                "find" => builtins::builtin_find(&args, |func, call_args| self.call_function_value(func, call_args)),
+                "find_index" => builtins::builtin_find_index(&args, |func, call_args| self.call_function_value(func, call_args)),
+                "reduce" => builtins::builtin_reduce(&args, |func, call_args| self.call_function_value(func, call_args)),
+                "every" => builtins::builtin_every(&args, |func, call_args| self.call_function_value(func, call_args)),
+                "some" => builtins::builtin_some(&args, |func, call_args| self.call_function_value(func, call_args)),
+                _ => unreachable!(),
+            };
+        }
+        
         match name {
             "count" => builtins::builtin_count(&args),
             "sum" => builtins::builtin_sum(&args),
@@ -409,6 +428,51 @@ impl Interpreter {
             "sort_by" => builtins::builtin_sort_by(&args, |v, f| self.get_field(v, f)),
             "group_by" => builtins::builtin_group_by(&args, |v, f| self.get_field(v, f)),
             "include" => self.builtin_include(&args),
+            "reverse" => builtins::builtin_reverse(&args),
+            "sort" => builtins::builtin_sort(&args),
+            "slice" => builtins::builtin_slice(&args),
+            "pop" => builtins::builtin_pop(&args),
+            "shift" => builtins::builtin_shift(&args),
+            "flat" => builtins::builtin_flat(&args),
+            "flatten" => builtins::builtin_flatten(&args),
+            "zip" => builtins::builtin_zip(&args),
+            "first" => builtins::builtin_first(&args),
+            "last" => builtins::builtin_last(&args),
+            "split" => builtins::builtin_split(&args),
+            "join" => builtins::builtin_join(&args, |v| self.value_to_string(v)),
+            "trim" => builtins::builtin_trim(&args),
+            "upper" => builtins::builtin_upper(&args),
+            "lower" => builtins::builtin_lower(&args),
+            "contains" => builtins::builtin_contains(&args),
+            "starts_with" => builtins::builtin_starts_with(&args),
+            "ends_with" => builtins::builtin_ends_with(&args),
+            "replace" => builtins::builtin_replace(&args),
+            "len" => builtins::builtin_len(&args),
+            "keys" => builtins::builtin_keys(&args),
+            "values" => builtins::builtin_values(&args),
+            "entries" => builtins::builtin_entries(&args),
+            "has" => builtins::builtin_has(&args),
+            "merge" => builtins::builtin_merge(&args),
+            "typeof" => builtins::builtin_typeof(&args),
+            "is_null" => builtins::builtin_is_null(&args),
+            "is_array" => builtins::builtin_is_array(&args),
+            "is_object" => builtins::builtin_is_object(&args),
+            "is_string" => builtins::builtin_is_string(&args),
+            "is_number" => builtins::builtin_is_number(&args),
+            "is_bool" => builtins::builtin_is_bool(&args),
+            "to_string" => builtins::builtin_to_string(&args, |v| self.value_to_string(v)),
+            "to_number" => builtins::builtin_to_number(&args),
+            "parse_json" => builtins::builtin_parse_json(&args),
+            "floor" => builtins::builtin_floor(&args),
+            "ceil" => builtins::builtin_ceil(&args),
+            "round" => builtins::builtin_round(&args),
+            "abs" => builtins::builtin_abs(&args),
+            "sqrt" => builtins::builtin_sqrt(&args),
+            "pow" => builtins::builtin_pow(&args),
+            "sin" => builtins::builtin_sin(&args),
+            "cos" => builtins::builtin_cos(&args),
+            "tan" => builtins::builtin_tan(&args),
+            "random" => builtins::builtin_random(&args),
             _ => Err(InterpreterError::InvalidOperation(format!("Unknown function: {}", name))),
         }
     }

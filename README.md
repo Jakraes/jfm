@@ -538,6 +538,352 @@ group_by(root.users, "age");  // Groups users by age
 // Returns: {"25": [...], "30": [...], "35": [...]}
 ```
 
+**`reverse(array)`** - Returns a new array with elements in reversed order:
+
+```jfm
+reverse([1, 2, 3]);  // [3, 2, 1]
+```
+
+**`sort(array)`** - Sorts an array of primitive values (numbers or strings):
+
+```jfm
+sort([3, 1, 4, 1, 5]);  // [1, 1, 3, 4, 5]
+sort(["zebra", "apple", "banana"]);  // ["apple", "banana", "zebra"]
+```
+
+**`slice(array, start, end)`** - Extracts a portion of an array:
+
+```jfm
+slice([1, 2, 3, 4, 5], 1, 4);  // [2, 3, 4]
+slice([1, 2, 3, 4, 5], 2);  // [3, 4, 5] (from index 2 to end)
+slice([1, 2, 3, 4, 5], -2);  // [4, 5] (last 2 elements)
+```
+
+**`pop(array)`** - Removes and returns the last element of an array:
+
+```jfm
+let arr = [1, 2, 3];
+pop(arr);  // Returns 3, arr is now [1, 2]
+```
+
+**`shift(array)`** - Removes and returns the first element of an array:
+
+```jfm
+let arr = [1, 2, 3];
+shift(arr);  // Returns 1, arr is now [2, 3]
+```
+
+**`flat(array)`** / **`flatten(array, depth)`** - Flattens nested arrays:
+
+```jfm
+flat([[1, 2], [3, 4]]);  // [1, 2, 3, 4]
+flatten([[[1]], [[2]]], 2);  // [1, 2] (flatten 2 levels deep)
+```
+
+**`find(array, predicate)`** - Finds the first element that matches a predicate function:
+
+```jfm
+find([1, 2, 3, 4, 5], x => x > 3);  // 4
+find(root.users, u => u.age > 30);  // First user with age > 30
+```
+
+**`find_index(array, predicate)`** - Finds the index of the first element that matches a predicate:
+
+```jfm
+find_index([1, 2, 3, 4, 5], x => x > 3);  // 3
+find_index([1, 2, 3], x => x > 10);  // -1 (not found)
+```
+
+**`reduce(array, fn, initial)`** - Reduces an array to a single value using a reducer function:
+
+```jfm
+reduce([1, 2, 3, 4], (acc, val) => acc + val, 0);  // 10
+reduce([2, 3, 4], (acc, val) => acc * val, 1);  // 24
+```
+
+**`every(array, predicate)`** - Checks if all elements match a predicate:
+
+```jfm
+every([2, 4, 6], x => x % 2 == 0);  // true
+every([2, 4, 5], x => x % 2 == 0);  // false
+every([], x => x > 0);  // true (empty array returns true)
+```
+
+**`some(array, predicate)`** - Checks if any element matches a predicate:
+
+```jfm
+some([1, 2, 3], x => x > 2);  // true
+some([1, 2, 3], x => x > 10);  // false
+```
+
+**`zip(array1, array2)`** - Combines two arrays into pairs:
+
+```jfm
+zip([1, 2, 3], [4, 5, 6]);  // [[1, 4], [2, 5], [3, 6]]
+zip([1, 2], [3, 4, 5]);  // [[1, 3], [2, 4]] (uses minimum length)
+```
+
+**`first(array)`** - Returns the first element of an array, or `null` if empty:
+
+```jfm
+first([1, 2, 3]);  // 1
+first([]);  // null
+```
+
+**`last(array)`** - Returns the last element of an array, or `null` if empty:
+
+```jfm
+last([1, 2, 3]);  // 3
+last([]);  // null
+```
+
+#### String Functions
+
+**`split(str, delimiter)`** - Splits a string into an array:
+
+```jfm
+split("a,b,c", ",");  // ["a", "b", "c"]
+split("hello world", " ");  // ["hello", "world"]
+```
+
+**`join(array, delimiter)`** - Joins an array into a string:
+
+```jfm
+join(["a", "b", "c"], ",");  // "a,b,c"
+join([1, 2, 3], "-");  // "1-2-3"
+```
+
+**`trim(str)`** - Removes leading and trailing whitespace:
+
+```jfm
+trim("  hello  ");  // "hello"
+```
+
+**`upper(str)`** - Converts a string to uppercase:
+
+```jfm
+upper("hello");  // "HELLO"
+```
+
+**`lower(str)`** - Converts a string to lowercase:
+
+```jfm
+lower("HELLO");  // "hello"
+```
+
+**`contains(str, substr)`** - Checks if a string contains a substring:
+
+```jfm
+contains("hello world", "world");  // true
+contains("hello", "xyz");  // false
+```
+
+**`starts_with(str, prefix)`** - Checks if a string starts with a prefix:
+
+```jfm
+starts_with("hello", "he");  // true
+starts_with("hello", "lo");  // false
+```
+
+**`ends_with(str, suffix)`** - Checks if a string ends with a suffix:
+
+```jfm
+ends_with("hello", "lo");  // true
+ends_with("hello", "he");  // false
+```
+
+**`replace(str, from, to)`** - Replaces the first occurrence of a substring:
+
+```jfm
+replace("hello world", "world", "rust");  // "hello rust"
+```
+
+**`len(str)`** - Returns the length of a string:
+
+```jfm
+len("hello");  // 5
+```
+
+#### Object Functions
+
+**`keys(object)`** - Returns an array of object keys:
+
+```jfm
+keys({"name": "Alice", "age": 30});  // ["name", "age"]
+```
+
+**`values(object)`** - Returns an array of object values:
+
+```jfm
+values({"name": "Alice", "age": 30});  // ["Alice", 30]
+```
+
+**`entries(object)`** - Returns an array of [key, value] pairs:
+
+```jfm
+entries({"name": "Alice", "age": 30});  // [["name", "Alice"], ["age", 30]]
+```
+
+**`has(object, key)`** - Checks if an object has a key:
+
+```jfm
+has({"name": "Alice"}, "name");  // true
+has({"name": "Alice"}, "age");  // false
+```
+
+**`merge(obj1, obj2)`** - Merges two objects, with obj2 values overriding obj1:
+
+```jfm
+merge({"a": 1, "b": 2}, {"b": 3, "c": 4});  // {"a": 1, "b": 3, "c": 4}
+```
+
+#### Type Functions
+
+**`typeof(value)`** - Returns the type of a value as a string:
+
+```jfm
+typeof(42);  // "number"
+typeof("hello");  // "string"
+typeof([1, 2, 3]);  // "array"
+typeof({"key": "value"});  // "object"
+typeof(null);  // "null"
+typeof(true);  // "bool"
+```
+
+**`is_null(v)`** - Checks if a value is null:
+
+```jfm
+is_null(null);  // true
+is_null(42);  // false
+```
+
+**`is_array(v)`** - Checks if a value is an array:
+
+```jfm
+is_array([1, 2, 3]);  // true
+is_array(42);  // false
+```
+
+**`is_object(v)`** - Checks if a value is an object:
+
+```jfm
+is_object({"key": "value"});  // true
+is_object(42);  // false
+```
+
+**`is_string(v)`** - Checks if a value is a string:
+
+```jfm
+is_string("hello");  // true
+is_string(42);  // false
+```
+
+**`is_number(v)`** - Checks if a value is a number:
+
+```jfm
+is_number(42);  // true
+is_number("42");  // false
+```
+
+**`is_bool(v)`** - Checks if a value is a boolean:
+
+```jfm
+is_bool(true);  // true
+is_bool(42);  // false
+```
+
+**`to_string(v)`** - Converts a value to a string:
+
+```jfm
+to_string(42);  // "42"
+to_string(true);  // "true"
+to_string([1, 2, 3]);  // "[1, 2, 3]"
+```
+
+**`to_number(v)`** - Converts a value to a number:
+
+```jfm
+to_number("42");  // 42
+to_number(42);  // 42 (already a number)
+```
+
+**`parse_json(str)`** - Parses a JSON string into a value:
+
+```jfm
+parse_json("{\"key\": \"value\"}");  // {"key": "value"}
+parse_json("[1, 2, 3]");  // [1, 2, 3]
+```
+
+#### Math Functions
+
+**`floor(n)`** - Returns the largest integer less than or equal to a number:
+
+```jfm
+floor(3.7);  // 3
+floor(-3.7);  // -4
+```
+
+**`ceil(n)`** - Returns the smallest integer greater than or equal to a number:
+
+```jfm
+ceil(3.2);  // 4
+ceil(-3.2);  // -3
+```
+
+**`round(n)`** - Rounds a number to the nearest integer:
+
+```jfm
+round(3.5);  // 4
+round(3.2);  // 3
+```
+
+**`abs(n)`** - Returns the absolute value of a number:
+
+```jfm
+abs(-5);  // 5
+abs(5);  // 5
+```
+
+**`sqrt(n)`** - Returns the square root of a number:
+
+```jfm
+sqrt(16);  // 4
+sqrt(9);  // 3
+```
+
+**`pow(a, b)`** - Returns base raised to the power of exponent:
+
+```jfm
+pow(2, 3);  // 8
+pow(10, 2);  // 100
+```
+
+**`sin(n)`** - Returns the sine of a number (in radians):
+
+```jfm
+sin(0);  // 0
+sin(3.14159 / 2);  // approximately 1
+```
+
+**`cos(n)`** - Returns the cosine of a number (in radians):
+
+```jfm
+cos(0);  // 1
+cos(3.14159);  // approximately -1
+```
+
+**`tan(n)`** - Returns the tangent of a number (in radians):
+
+```jfm
+tan(0);  // 0
+```
+
+**`random()`** - Returns a random number between 0.0 and 1.0:
+
+```jfm
+random();  // Random number between 0 and 1
+```
+
 #### Script Functions
 
 **`include(path)`** - Executes an external script file and returns its result:
