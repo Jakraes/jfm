@@ -11,7 +11,6 @@ pub enum InterpreterError {
 }
 
 impl InterpreterError {
-    // Convenience constructors that use dummy spans (for backward compatibility)
     pub fn undefined_variable(name: impl Into<String>) -> Self {
         Self::UndefinedVariable { name: name.into(), span: Span::dummy() }
     }
@@ -36,7 +35,6 @@ impl InterpreterError {
         Self::InvalidOperation { message: message.into(), span: Span::dummy() }
     }
 
-    // With span constructors
     pub fn undefined_variable_at(name: impl Into<String>, span: Span) -> Self {
         Self::UndefinedVariable { name: name.into(), span }
     }
@@ -61,7 +59,6 @@ impl InterpreterError {
         Self::InvalidOperation { message: message.into(), span }
     }
 
-    /// Get the span associated with this error
     pub fn span(&self) -> Span {
         match self {
             Self::UndefinedVariable { span, .. } => *span,
@@ -73,7 +70,6 @@ impl InterpreterError {
         }
     }
 
-    /// Convert to a diagnostic for pretty printing
     pub fn to_diagnostic(&self) -> Diagnostic {
         match self {
             Self::UndefinedVariable { name, span } => {

@@ -130,7 +130,7 @@ pub fn builtin_avg(args: &[Value]) -> Result<Value, InterpreterError> {
         let total: f64 = borrowed.iter()
             .filter_map(|v| if let Value::Number(n, _) = v { Some(*n) } else { None })
             .sum();
-        Ok(Value::Number(total / borrowed.len() as f64, true))  // avg always returns float
+        Ok(Value::Number(total / borrowed.len() as f64, true))
     })
 }
 

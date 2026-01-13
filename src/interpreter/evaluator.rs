@@ -301,14 +301,14 @@ impl Interpreter {
                 let s = self.eval_expr(start)?;
                 let e = self.eval_expr(end)?;
                 match (s, e) {
-                    (Value::Number(start_n, _), Value::Number(end_n, _)) => {
-                        let mut vals = Vec::new();
-                        let mut i = start_n;
-                        while i <= end_n {
-                            vals.push(Value::Number(i, false));  // Range produces integers
-                            i += 1.0;
+                    (Value::Number(start_num, _), Value::Number(end_num, _)) => {
+                        let mut values = Vec::new();
+                        let mut current = start_num;
+                        while current <= end_num {
+                            values.push(Value::Number(current, false));
+                            current += 1.0;
                         }
-                        Ok(Value::Array(Rc::new(RefCell::new(vals))))
+                        Ok(Value::Array(Rc::new(RefCell::new(values))))
                     }
                     _ => Err(InterpreterError::type_error_at("Range requires numbers", expr.span)),
                 }
@@ -637,42 +637,42 @@ impl Interpreter {
         right: &Value,
     ) -> Result<Value, InterpreterError> {
         match (left, op, right) {
-            (Value::Number(a, af), BinaryOp::Add, Value::Number(b, bf)) => Ok(Value::Number(a + b, *af || *bf)),
-            (Value::Number(a, af), BinaryOp::Sub, Value::Number(b, bf)) => Ok(Value::Number(a - b, *af || *bf)),
-            (Value::Number(a, af), BinaryOp::Mul, Value::Number(b, bf)) => Ok(Value::Number(a * b, *af || *bf)),
-            (Value::Number(a, _), BinaryOp::Div, Value::Number(b, _)) => {
-                if *b == 0.0 {
+            (Value::Number(left_num, left_float), BinaryOp::Add, Value::Number(right_num, right_float)) => Ok(Value::Number(left_num + right_num, *left_float || *right_float)),
+            (Value::Number(left_num, left_float), BinaryOp::Sub, Value::Number(right_num, right_float)) => Ok(Value::Number(left_num - right_num, *left_float || *right_float)),
+            (Value::Number(left_num, left_float), BinaryOp::Mul, Value::Number(right_num, right_float)) => Ok(Value::Number(left_num * right_num, *left_float || *right_float)),
+            (Value::Number(left_num, _), BinaryOp::Div, Value::Number(right_num, _)) => {
+                if *right_num == 0.0 {
                     Err(InterpreterError::division_by_zero())
                 } else {
-                    Ok(Value::Number(a / b, true))  // Division always produces float
+                    Ok(Value::Number(left_num / right_num, true))
                 }
             }
-            (Value::Number(a, af), BinaryOp::Mod, Value::Number(b, bf)) => Ok(Value::Number(a % b, *af || *bf)),
-            (Value::Number(a, _), BinaryOp::Pow, Value::Number(b, _)) => Ok(Value::Number(a.powf(*b), true)),  // Power always produces float
-            (Value::String(a), BinaryOp::Add, Value::String(b)) => {
-                let mut combined = String::with_capacity(a.len() + b.len());
-                combined.push_str(a);
-                combined.push_str(b);
+            (Value::Number(left_num, left_float), BinaryOp::Mod, Value::Number(right_num, right_float)) => Ok(Value::Number(left_num % right_num, *left_float || *right_float)),
+            (Value::Number(base, _), BinaryOp::Pow, Value::Number(exponent, _)) => Ok(Value::Number(base.powf(*exponent), true)),
+            (Value::String(left_str), BinaryOp::Add, Value::String(right_str)) => {
+                let mut combined = String::with_capacity(left_str.len() + right_str.len());
+                combined.push_str(left_str);
+                combined.push_str(right_str);
                 Ok(Value::String(Rc::<str>::from(combined)))
             }
-            (Value::Array(a), BinaryOp::Add, Value::Array(b)) => {
-                let mut result = a.borrow().clone();
-                result.extend(b.borrow().iter().cloned());
+            (Value::Array(left_arr), BinaryOp::Add, Value::Array(right_arr)) => {
+                let mut result = left_arr.borrow().clone();
+                result.extend(right_arr.borrow().iter().cloned());
                 Ok(Value::Array(Rc::new(RefCell::new(result))))
             }
-            (Value::Array(a), BinaryOp::Add, b) => {
-                let mut result = a.borrow().clone();
-                result.push(b.clone());
+            (Value::Array(array), BinaryOp::Add, value) => {
+                let mut result = array.borrow().clone();
+                result.push(value.clone());
                 Ok(Value::Array(Rc::new(RefCell::new(result))))
             }
-            (a, BinaryOp::Eq, b) => Ok(Value::Bool(self.values_equal(a, b))),
-            (a, BinaryOp::NotEq, b) => Ok(Value::Bool(!self.values_equal(a, b))),
-            (Value::Number(a, _), BinaryOp::Greater, Value::Number(b, _)) => Ok(Value::Bool(a > b)),
-            (Value::Number(a, _), BinaryOp::Less, Value::Number(b, _)) => Ok(Value::Bool(a < b)),
-            (Value::Number(a, _), BinaryOp::GreaterEq, Value::Number(b, _)) => Ok(Value::Bool(a >= b)),
-            (Value::Number(a, _), BinaryOp::LessEq, Value::Number(b, _)) => Ok(Value::Bool(a <= b)),
-            (Value::Bool(a), BinaryOp::And, Value::Bool(b)) => Ok(Value::Bool(*a && *b)),
-            (Value::Bool(a), BinaryOp::Or, Value::Bool(b)) => Ok(Value::Bool(*a || *b)),
+            (left_val, BinaryOp::Eq, right_val) => Ok(Value::Bool(self.values_equal(left_val, right_val))),
+            (left_val, BinaryOp::NotEq, right_val) => Ok(Value::Bool(!self.values_equal(left_val, right_val))),
+            (Value::Number(left_num, _), BinaryOp::Greater, Value::Number(right_num, _)) => Ok(Value::Bool(left_num > right_num)),
+            (Value::Number(left_num, _), BinaryOp::Less, Value::Number(right_num, _)) => Ok(Value::Bool(left_num < right_num)),
+            (Value::Number(left_num, _), BinaryOp::GreaterEq, Value::Number(right_num, _)) => Ok(Value::Bool(left_num >= right_num)),
+            (Value::Number(left_num, _), BinaryOp::LessEq, Value::Number(right_num, _)) => Ok(Value::Bool(left_num <= right_num)),
+            (Value::Bool(left_bool), BinaryOp::And, Value::Bool(right_bool)) => Ok(Value::Bool(*left_bool && *right_bool)),
+            (Value::Bool(left_bool), BinaryOp::Or, Value::Bool(right_bool)) => Ok(Value::Bool(*left_bool || *right_bool)),
             _ => Err(InterpreterError::invalid_operation(format!(
                 "Cannot apply {:?} to {:?} and {:?}",
                 op, left, right
@@ -774,7 +774,6 @@ impl Interpreter {
     }
 }
 
-/// Parse and run a query, returning a simple error string for backward compatibility
 pub fn parse_and_run(source: &str, root: Value) -> Result<Option<Value>, String> {
     let tokens = match crate::lexer::lexer().parse(source).into_output() {
         Some(t) => t,
@@ -790,7 +789,6 @@ pub fn parse_and_run(source: &str, root: Value) -> Result<Option<Value>, String>
         .map_err(|e| format!("Runtime error: {}", e))
 }
 
-/// Parse and run with detailed error diagnostics
 pub fn parse_and_run_with_diagnostics(
     source: &str, 
     root: Value

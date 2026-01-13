@@ -3,14 +3,12 @@ use crate::lexer::{BinaryOp, Expr, ExprKind, Stmt, Token, UnaryOp, Value};
 use chumsky::Parser as _;
 use std::rc::Rc;
 
-/// A token with its source span
 #[derive(Debug, Clone)]
 pub struct SpannedToken {
     pub token: Token,
     pub span: Span,
 }
 
-/// Parse error with location information
 #[derive(Debug, Clone)]
 pub struct ParseError {
     pub message: String,
@@ -60,7 +58,6 @@ impl ParseError {
     }
 }
 
-/// Result of parsing with potential errors
 pub struct ParseResult {
     pub statements: Vec<Stmt>,
     pub errors: Vec<ParseError>,
@@ -89,7 +86,6 @@ impl TokenParser {
         }
     }
 
-    /// Create a TokenParser from the lexer output
     pub fn from_lexer_output(tokens: Vec<(Token, chumsky::span::SimpleSpan)>, source_len: usize) -> Self {
         let spanned_tokens: Vec<SpannedToken> = tokens
             .into_iter()
@@ -155,7 +151,6 @@ impl TokenParser {
         self.errors.push(error);
     }
 
-    /// Synchronize parser state after an error (skip to recovery point)
     fn synchronize(&mut self) {
         while let Some(token) = self.current_token() {
             match token {
@@ -184,7 +179,6 @@ impl TokenParser {
                 Err(err) => {
                     self.add_error(err.clone());
                     self.synchronize();
-                    // Limit errors to prevent cascade
                     if self.errors.len() >= 10 {
                         break;
                     }
@@ -200,7 +194,6 @@ impl TokenParser {
         }
     }
 
-    /// Parse and return full result with all errors
     pub fn parse_with_errors(&mut self) -> ParseResult {
         let mut statements = Vec::new();
         while self.current_token().is_some() {
@@ -221,7 +214,6 @@ impl TokenParser {
         }
     }
 
-    /// Get collected errors
     pub fn get_errors(&self) -> &[ParseError] {
         &self.errors
     }
@@ -270,7 +262,7 @@ impl TokenParser {
     fn parse_for_statement(&mut self) -> Result<Stmt, ParseError> {
         self.expect(Token::For)?;
         let var = match self.advance() {
-            Some(SpannedToken { token: Token::Ident(n), .. }) => Rc::from(n.as_str()),
+            Some(SpannedToken { token: Token::Ident(identifier_name), .. }) => Rc::from(identifier_name.as_str()),
             other => {
                 let span = other.as_ref().map(|st| st.span).unwrap_or(self.current_span());
                 return Err(ParseError::new("expected identifier in for loop", span)
@@ -294,7 +286,7 @@ impl TokenParser {
     fn parse_function_statement(&mut self) -> Result<Stmt, ParseError> {
         self.expect(Token::Fn)?;
         let name = match self.advance() {
-            Some(SpannedToken { token: Token::Ident(n), .. }) => Rc::from(n.as_str()),
+            Some(SpannedToken { token: Token::Ident(identifier_name), .. }) => Rc::from(identifier_name.as_str()),
             other => {
                 let span = other.map(|st| st.span).unwrap_or(self.current_span());
                 return Err(ParseError::new("expected function name", span)
@@ -306,7 +298,7 @@ impl TokenParser {
         if !matches!(self.current_token(), Some(Token::RParen)) {
             loop {
                 let param = match self.advance() {
-                    Some(SpannedToken { token: Token::Ident(n), .. }) => Rc::from(n.as_str()),
+                    Some(SpannedToken { token: Token::Ident(param_name), .. }) => Rc::from(param_name.as_str()),
                     other => {
                         let span = other.map(|st| st.span).unwrap_or(self.current_span());
                         return Err(ParseError::new("expected parameter name", span));
@@ -361,7 +353,7 @@ impl TokenParser {
         self.expect(Token::Let)?;
 
         let name = match self.advance() {
-            Some(SpannedToken { token: Token::Ident(n), .. }) => n,
+            Some(SpannedToken { token: Token::Ident(identifier_name), .. }) => identifier_name,
             other => {
                 let span = other.map(|st| st.span).unwrap_or(self.current_span());
                 return Err(ParseError::new("expected identifier after 'let'", span)
@@ -435,7 +427,7 @@ impl TokenParser {
             if !matches!(self.current_token(), Some(Token::RParen)) {
                 loop {
                     let param = match self.advance() {
-                        Some(SpannedToken { token: Token::Ident(n), .. }) => Rc::from(n.as_str()),
+                        Some(SpannedToken { token: Token::Ident(param_name), .. }) => Rc::from(param_name.as_str()),
                         _ => {
                             self.current = saved_current;
                             return self.parse_pipe();
@@ -463,7 +455,7 @@ impl TokenParser {
             }
         } else if let Some(Token::Ident(_)) = self.current_token() {
             let param_name = match self.advance() {
-                Some(SpannedToken { token: Token::Ident(n), .. }) => Rc::from(n.as_str()),
+                Some(SpannedToken { token: Token::Ident(identifier_name), .. }) => Rc::from(identifier_name.as_str()),
                 _ => {
                     self.current = saved_current;
                     return self.parse_pipe();
@@ -480,7 +472,7 @@ impl TokenParser {
             return self.parse_pipe();
         };
 
-        self.advance(); // consume =>
+        self.advance();
         let body = self.parse_expression()?;
         let span = start_span.merge(body.span);
 
@@ -535,11 +527,11 @@ impl TokenParser {
     }
 
     fn parse_null_coalesce(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_logical_or()?;
+        let mut left = self.parse_binary_expr(0)?;
 
         while matches!(self.current_token(), Some(Token::NullCoalesce)) {
             self.advance();
-            let right = self.parse_logical_or()?;
+            let right = self.parse_binary_expr(0)?;
             let span = left.span.merge(right.span);
             left = Expr {
                 kind: ExprKind::NullCoalesce {
@@ -553,157 +545,56 @@ impl TokenParser {
         Ok(left)
     }
 
-    fn parse_logical_or(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_logical_and()?;
-
-        while matches!(self.current_token(), Some(Token::Or)) {
-            self.advance();
-            let right = self.parse_logical_and()?;
-            let span = left.span.merge(right.span);
-            left = Expr {
-                kind: ExprKind::Binary {
-                    left: Box::new(left),
-                    op: BinaryOp::Or,
-                    right: Box::new(right),
-                },
-                span,
-            };
+    fn token_to_binary_operator(token: &Token) -> Option<(u8, BinaryOp)> {
+        match token {
+            Token::Or => Some((1, BinaryOp::Or)),
+            Token::And => Some((2, BinaryOp::And)),
+            Token::Eq => Some((3, BinaryOp::Eq)),
+            Token::NotEq => Some((3, BinaryOp::NotEq)),
+            Token::Greater => Some((3, BinaryOp::Greater)),
+            Token::Less => Some((3, BinaryOp::Less)),
+            Token::GreaterEq => Some((3, BinaryOp::GreaterEq)),
+            Token::LessEq => Some((3, BinaryOp::LessEq)),
+            Token::Plus => Some((5, BinaryOp::Add)),
+            Token::Minus => Some((5, BinaryOp::Sub)),
+            Token::Star => Some((6, BinaryOp::Mul)),
+            Token::Slash => Some((6, BinaryOp::Div)),
+            Token::Percent => Some((6, BinaryOp::Mod)),
+            Token::Caret => Some((7, BinaryOp::Pow)),
+            _ => None,
         }
-
-        Ok(left)
     }
 
-    fn parse_logical_and(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_comparison()?;
+    fn parse_binary_expr(&mut self, min_precedence: u8) -> Result<Expr, ParseError> {
+        let mut left = self.parse_unary()?;
 
-        while matches!(self.current_token(), Some(Token::And)) {
+        const RANGE_OPERATOR_PRECEDENCE: u8 = 4;
+        if min_precedence <= RANGE_OPERATOR_PRECEDENCE && matches!(self.current_token(), Some(Token::DotDot)) {
             self.advance();
-            let right = self.parse_comparison()?;
+            let right = self.parse_binary_expr(RANGE_OPERATOR_PRECEDENCE + 1)?;
             let span = left.span.merge(right.span);
             left = Expr {
-                kind: ExprKind::Binary {
-                    left: Box::new(left),
-                    op: BinaryOp::And,
-                    right: Box::new(right),
-                },
-                span,
-            };
-        }
-
-
-        Ok(left)
-    }
-
-    fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_range()?;
-
-        while let Some(op) = self.current_token() {
-            let binary_op = match op {
-                Token::Eq => BinaryOp::Eq,
-                Token::NotEq => BinaryOp::NotEq,
-                Token::Greater => BinaryOp::Greater,
-                Token::Less => BinaryOp::Less,
-                Token::GreaterEq => BinaryOp::GreaterEq,
-                Token::LessEq => BinaryOp::LessEq,
-                _ => break,
-            };
-            self.advance();
-            let right = self.parse_range()?;
-            let span = left.span.merge(right.span);
-            left = Expr {
-                kind: ExprKind::Binary {
-                    left: Box::new(left),
-                    op: binary_op,
-                    right: Box::new(right),
-                },
-                span,
-            };
-        }
-
-        Ok(left)
-    }
-
-    fn parse_range(&mut self) -> Result<Expr, ParseError> {
-        let left = self.parse_additive()?;
-
-        if matches!(self.current_token(), Some(Token::DotDot)) {
-            self.advance();
-            let right = self.parse_additive()?;
-            let span = left.span.merge(right.span);
-            return Ok(Expr {
                 kind: ExprKind::Range {
                     start: Box::new(left),
                     end: Box::new(right),
                 },
                 span,
-            });
+            };
+            return Ok(left);
         }
 
-        Ok(left)
-    }
-
-    fn parse_additive(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_multiplicative()?;
-
-        while let Some(op) = self.current_token() {
-            let binary_op = match op {
-                Token::Plus => BinaryOp::Add,
-                Token::Minus => BinaryOp::Sub,
+        while let Some(token) = self.current_token().cloned() {
+            let (precedence, operator) = match Self::token_to_binary_operator(&token) {
+                Some((prec, op)) if prec >= min_precedence => (prec, op),
                 _ => break,
             };
             self.advance();
-            let right = self.parse_multiplicative()?;
+            let right = self.parse_binary_expr(precedence + 1)?;
             let span = left.span.merge(right.span);
             left = Expr {
                 kind: ExprKind::Binary {
                     left: Box::new(left),
-                    op: binary_op,
-                    right: Box::new(right),
-                },
-                span,
-            };
-        }
-
-        Ok(left)
-    }
-
-    fn parse_multiplicative(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_power()?;
-
-        while let Some(op) = self.current_token() {
-            let binary_op = match op {
-                Token::Star => BinaryOp::Mul,
-                Token::Slash => BinaryOp::Div,
-                Token::Percent => BinaryOp::Mod,
-                _ => break,
-            };
-            self.advance();
-            let right = self.parse_power()?;
-            let span = left.span.merge(right.span);
-            left = Expr {
-                kind: ExprKind::Binary {
-                    left: Box::new(left),
-                    op: binary_op,
-                    right: Box::new(right),
-                },
-                span,
-            };
-        }
-
-        Ok(left)
-    }
-
-    fn parse_power(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_unary()?;
-
-        while matches!(self.current_token(), Some(Token::Caret)) {
-            self.advance();
-            let right = self.parse_unary()?;
-            let span = left.span.merge(right.span);
-            left = Expr {
-                kind: ExprKind::Binary {
-                    left: Box::new(left),
-                    op: BinaryOp::Pow,
+                    op: operator,
                     right: Box::new(right),
                 },
                 span,
@@ -753,7 +644,7 @@ impl TokenParser {
                     self.advance();
                     let field_span = self.current_span();
                     let field = match self.advance() {
-                        Some(SpannedToken { token: Token::Ident(f), .. }) => f,
+                        Some(SpannedToken { token: Token::Ident(field_name), .. }) => field_name,
                         other => {
                             return Err(ParseError::new(
                                 "expected field name after '.'",
@@ -775,7 +666,7 @@ impl TokenParser {
                     self.advance();
                     let field_span = self.current_span();
                     let field = match self.advance() {
-                        Some(SpannedToken { token: Token::Ident(f), .. }) => f,
+                        Some(SpannedToken { token: Token::Ident(field_name), .. }) => field_name,
                         other => {
                             return Err(ParseError::new(
                                 "expected field name after '?.'",
@@ -912,16 +803,16 @@ impl TokenParser {
         };
 
         match token {
-            Token::Number(n, is_float) => Ok(Expr {
-                kind: ExprKind::Literal(Value::Number(n, is_float)),
+            Token::Number(numeric_value, is_float) => Ok(Expr {
+                kind: ExprKind::Literal(Value::Number(numeric_value, is_float)),
                 span,
             }),
-            Token::String(s) => Ok(Expr {
-                kind: ExprKind::Literal(Value::String(Rc::from(s.as_str()))),
+            Token::String(string_value) => Ok(Expr {
+                kind: ExprKind::Literal(Value::String(Rc::from(string_value.as_str()))),
                 span,
             }),
-            Token::TemplateFull(s) => {
-                self.parse_template_literal(s, span)
+            Token::TemplateFull(template_content) => {
+                self.parse_template_literal(template_content, span)
             },
             Token::True => Ok(Expr {
                 kind: ExprKind::Literal(Value::Bool(true)),
@@ -980,8 +871,8 @@ impl TokenParser {
                 if !matches!(self.current_token(), Some(Token::RBrace)) {
                     loop {
                         let key = match self.advance() {
-                            Some(SpannedToken { token: Token::Ident(k), .. }) => k,
-                            Some(SpannedToken { token: Token::String(k), .. }) => k,
+                            Some(SpannedToken { token: Token::Ident(key_name), .. }) => key_name,
+                            Some(SpannedToken { token: Token::String(key_name), .. }) => key_name,
                             other => {
                                 let err_span =
                                     other.map(|st| st.span).unwrap_or(self.current_span());
@@ -1010,8 +901,8 @@ impl TokenParser {
             Token::Dot => {
                 let field_span = self.current_span();
                 let field = match self.advance() {
-                    Some(SpannedToken { token: Token::Ident(f), span: f_span }) => {
-                        (f, f_span)
+                    Some(SpannedToken { token: Token::Ident(field_name), span: field_name_span }) => {
+                        (field_name, field_name_span)
                     }
                     other => {
                         return Err(ParseError::new(

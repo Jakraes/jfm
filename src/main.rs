@@ -37,11 +37,9 @@ struct Args {
     #[arg(short = 'v', long = "verbose")]
     verbose: bool,
 
-    /// Limit output to N results (for array outputs)
     #[arg(short = 'n', long = "limit", value_name = "N")]
     limit: Option<usize>,
 
-    /// Enable streaming mode for large JSON files (processes line-delimited JSON or large arrays)
     #[arg(long = "stream")]
     stream: bool,
 
@@ -125,7 +123,6 @@ fn main() {
 
     verbose_log(&config, &format!("Read {} bytes of JSON input", json_str.len()));
 
-    // Handle streaming mode
     if config.stream {
         verbose_log(&config, "Streaming mode enabled");
         
@@ -254,11 +251,9 @@ fn run_interactive_mode(root_value: jfm::lexer::Value, out_file: &Option<PathBuf
 fn execute_query(query_str: &str, root_value: &jfm::lexer::Value, out_file: &Option<PathBuf>, is_interactive: bool, config: &AppConfig) {
     verbose_log(config, "Parsing query");
     
-    // Use the new diagnostic-aware function
     let result = match interpreter::parse_and_run_with_diagnostics(query_str, root_value.clone()) {
         Ok(Some(result)) => {
             verbose_log(config, "Query executed successfully");
-            // Apply limit if specified and result is an array
             let limited_result = apply_limit(&result, config.limit);
             format!("{}\n", value_to_json_string(&limited_result, config.compact))
         }
@@ -267,7 +262,6 @@ fn execute_query(query_str: &str, root_value: &jfm::lexer::Value, out_file: &Opt
             "{}\n".to_string()
         }
         Err(diagnostics) => {
-            // Render pretty diagnostics
             let rendered = render_diagnostics(query_str, "query", &diagnostics, config.color_enabled);
             eprint!("{}", rendered);
             std::process::exit(1);
@@ -451,12 +445,11 @@ fn convert_json_to_internal(json_val: serde_json::Value) -> jfm::lexer::Value {
     match json_val {
         serde_json::Value::Null => Value::Null,
         serde_json::Value::Bool(b) => Value::Bool(b),
-        serde_json::Value::Number(n) => {
-            let val = n.as_f64().unwrap_or(0.0);
-            let n_str = n.to_string();
-            // With arbitrary_precision feature, n.to_string() preserves the original representation
-            let is_float = n_str.contains('.') || n_str.contains('e') || n_str.contains('E');
-            Value::Number(val, is_float)
+        serde_json::Value::Number(json_number) => {
+            let numeric_value = json_number.as_f64().unwrap_or(0.0);
+            let number_string = json_number.to_string();
+            let is_float = number_string.contains('.') || number_string.contains('e') || number_string.contains('E');
+            Value::Number(numeric_value, is_float)
         }
         serde_json::Value::String(s) => Value::String(Rc::from(s.as_str())),
         serde_json::Value::Array(arr) => {
@@ -495,18 +488,16 @@ fn format_json(val: &jfm::lexer::Value, indent: Option<usize>) -> String {
     match val {
         Value::Null => "null".to_string(),
         Value::Bool(b) => b.to_string(),
-        Value::Number(n, is_float) => {
+        Value::Number(numeric_value, is_float) => {
             if *is_float {
-                // Ensure float representation has a decimal point
-                let s = n.to_string();
-                if s.contains('.') || s.contains('e') || s.contains('E') {
-                    s
+                let formatted = numeric_value.to_string();
+                if formatted.contains('.') || formatted.contains('e') || formatted.contains('E') {
+                    formatted
                 } else {
-                    format!("{}.0", n)
+                    format!("{}.0", numeric_value)
                 }
             } else {
-                // Integer representation - no decimal point
-                format!("{:.0}", n)
+                format!("{:.0}", numeric_value)
             }
         }
         Value::String(s) => format!("\"{}\"", escape_json_string(s)),

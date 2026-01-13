@@ -1,6 +1,5 @@
 use std::fmt;
 
-/// A source span representing a range of bytes in the source code
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Span {
     pub start: usize,
@@ -28,7 +27,6 @@ impl Span {
     }
 }
 
-/// Severity level for diagnostics
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Error,
@@ -48,14 +46,12 @@ impl fmt::Display for Severity {
     }
 }
 
-/// Style for diagnostic labels
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LabelStyle {
     Primary,
     Secondary,
 }
 
-/// A label pointing to a specific span in the source
 #[derive(Debug, Clone)]
 pub struct Label {
     pub span: Span,
@@ -81,7 +77,6 @@ impl Label {
     }
 }
 
-/// A complete diagnostic message
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub severity: Severity,
@@ -104,7 +99,7 @@ impl Diagnostic {
 
     pub fn warning(message: impl Into<String>) -> Self {
         Self {
-            severity: Severity::Error,
+            severity: Severity::Warning,
             code: None,
             message: message.into(),
             labels: Vec::new(),
@@ -133,15 +128,10 @@ impl Diagnostic {
     }
 }
 
-/// Information about a line in source code
-#[derive(Debug)]
 struct LineInfo {
-    _line_num: usize,
-    _start_offset: usize,
     content: String,
 }
 
-/// Computes line and column from a byte offset
 pub fn line_col(source: &str, offset: usize) -> (usize, usize) {
     let mut line = 1;
     let mut col = 1;
@@ -159,7 +149,6 @@ pub fn line_col(source: &str, offset: usize) -> (usize, usize) {
     (line, col)
 }
 
-/// Gets line information for rendering
 fn get_line_info(source: &str, line_num: usize) -> Option<LineInfo> {
     let mut current_line = 1;
     let mut start_offset = 0;
@@ -168,8 +157,6 @@ fn get_line_info(source: &str, line_num: usize) -> Option<LineInfo> {
         if current_line == line_num {
             let end = source[i..].find('\n').map(|p| i + p).unwrap_or(source.len());
             return Some(LineInfo {
-                _line_num: line_num,
-                _start_offset: i,
                 content: source[i..end].to_string(),
             });
         }
@@ -181,8 +168,6 @@ fn get_line_info(source: &str, line_num: usize) -> Option<LineInfo> {
 
     if current_line == line_num && start_offset <= source.len() {
         Some(LineInfo {
-            _line_num: line_num,
-            _start_offset: start_offset,
             content: source[start_offset..].to_string(),
         })
     } else {
@@ -190,7 +175,6 @@ fn get_line_info(source: &str, line_num: usize) -> Option<LineInfo> {
     }
 }
 
-/// Diagnostic renderer for Rust-like error output
 pub struct DiagnosticRenderer<'a> {
     source: &'a str,
     file_name: &'a str,
@@ -206,14 +190,11 @@ impl<'a> DiagnosticRenderer<'a> {
         }
     }
 
-    /// Render a diagnostic to a string
     pub fn render(&self, diagnostic: &Diagnostic) -> String {
         let mut output = String::new();
 
-        // Header line: error[E0001]: message
         self.render_header(&mut output, diagnostic);
 
-        // Find all lines we need to display
         let mut lines_to_show: Vec<usize> = Vec::new();
         for label in &diagnostic.labels {
             let (start_line, _) = line_col(self.source, label.span.start);
@@ -227,7 +208,6 @@ impl<'a> DiagnosticRenderer<'a> {
         lines_to_show.sort();
 
         if !lines_to_show.is_empty() {
-            // Location line: --> file:line:col
             let first_label = diagnostic.labels.first();
             if let Some(label) = first_label {
                 let (line, col) = line_col(self.source, label.span.start);
@@ -235,23 +215,18 @@ impl<'a> DiagnosticRenderer<'a> {
                     self.style_blue("-->"), self.file_name, line, col));
             }
 
-            // Calculate line number width for alignment
             let max_line = lines_to_show.last().copied().unwrap_or(1);
             let line_num_width = max_line.to_string().len();
 
-            // Empty line with gutter
             output.push_str(&format!("{} {}\n", " ".repeat(line_num_width + 1), self.style_blue("|")));
 
-            // Render each line with its labels
             for &line_num in &lines_to_show {
                 self.render_line(&mut output, diagnostic, line_num, line_num_width);
             }
 
-            // Final empty gutter line
             output.push_str(&format!("{} {}\n", " ".repeat(line_num_width + 1), self.style_blue("|")));
         }
 
-        // Notes and help
         for note in &diagnostic.notes {
             output.push_str(&format!("  {} {}\n", self.style_blue("="), note));
         }
@@ -282,7 +257,6 @@ impl<'a> DiagnosticRenderer<'a> {
             None => return,
         };
 
-        // Source line: "  3 |     let x = 5;"
         output.push_str(&format!("{:>width$} {} {}\n",
             self.style_blue(&line_num.to_string()),
             self.style_blue("|"),
@@ -290,7 +264,6 @@ impl<'a> DiagnosticRenderer<'a> {
             width = width + 1
         ));
 
-        // Collect labels for this line
         let mut underlines: Vec<(usize, usize, &str, LabelStyle)> = Vec::new();
         for label in &diagnostic.labels {
             let (label_start_line, start_col) = line_col(self.source, label.span.start);
@@ -303,33 +276,28 @@ impl<'a> DiagnosticRenderer<'a> {
             }
         }
 
-        // Render underlines
         if !underlines.is_empty() {
             let mut underline_str = String::new();
             let mut pos = 1;
             
-            // Sort by start position
             underlines.sort_by_key(|(start, _, _, _)| *start);
 
             for (col_start, col_end, _, style) in &underlines {
-                // Pad to start position
                 while pos < *col_start {
                     underline_str.push(' ');
                     pos += 1;
                 }
-                // Draw underline
-                let char_to_use = match style {
+                let underline_char = match style {
                     LabelStyle::Primary => '^',
                     LabelStyle::Secondary => '-',
                 };
                 while pos < *col_end {
-                    underline_str.push(char_to_use);
+                    underline_str.push(underline_char);
                     pos += 1;
                 }
             }
 
-            // Color the underline
-            let styled_underline = if underlines.iter().any(|(_, _, _, s)| *s == LabelStyle::Primary) {
+            let styled_underline = if underlines.iter().any(|(_, _, _, style)| *style == LabelStyle::Primary) {
                 self.style_red(&underline_str)
             } else {
                 self.style_blue(&underline_str)
@@ -341,7 +309,6 @@ impl<'a> DiagnosticRenderer<'a> {
                 styled_underline
             ));
 
-            // Render label messages (only for primary labels or if there's a message)
             for (col_start, _, message, style) in &underlines {
                 if !message.is_empty() {
                     let padding = " ".repeat(col_start.saturating_sub(1));
@@ -360,12 +327,11 @@ impl<'a> DiagnosticRenderer<'a> {
         }
     }
 
-    // Color helpers
-    fn style_red(&self, s: &str) -> String {
+    fn style_red(&self, text: &str) -> String {
         if self.use_color {
-            format!("\x1b[31m{}\x1b[0m", s)
+            format!("\x1b[31m{}\x1b[0m", text)
         } else {
-            s.to_string()
+            text.to_string()
         }
     }
 

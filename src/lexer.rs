@@ -20,14 +20,9 @@ pub enum Token {
     Fn,
 
     Ident(String),
-    Number(f64, bool),  // (value, is_float)
+    Number(f64, bool),
     String(String),
-    TemplateStart,           // Start of template literal `
-    TemplateMiddle(String),  // Text between interpolations
-    TemplateEnd(String),     // Final text part before closing `
-    TemplateFull(String),    // Template with no interpolations
-    InterpolationStart,      // ${
-    InterpolationEnd,        // } inside template
+    TemplateFull(String),
     True,
     False,
     Null,
@@ -76,7 +71,7 @@ pub enum Token {
 pub enum Value {
     Null,
     Bool(bool),
-    Number(f64, bool),  // (value, is_float)
+    Number(f64, bool),
     String(Rc<str>),
     Array(Rc<RefCell<Vec<Value>>>),
     Object(Rc<RefCell<IndexMap<String, Value>>>),
@@ -87,12 +82,12 @@ impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Value::Null, Value::Null) => true,
-            (Value::Bool(b1), Value::Bool(b2)) => b1 == b2,
-            (Value::Number(n1, _), Value::Number(n2, _)) => n1 == n2,
-            (Value::String(s1), Value::String(s2)) => s1 == s2,
-            (Value::Array(a1), Value::Array(a2)) => a1 == a2,
-            (Value::Object(o1), Value::Object(o2)) => o1 == o2,
-            (Value::Function(f1), Value::Function(f2)) => Rc::ptr_eq(f1, f2),
+            (Value::Bool(left_bool), Value::Bool(right_bool)) => left_bool == right_bool,
+            (Value::Number(left_num, _), Value::Number(right_num, _)) => left_num == right_num,
+            (Value::String(left_str), Value::String(right_str)) => left_str == right_str,
+            (Value::Array(left_arr), Value::Array(right_arr)) => left_arr == right_arr,
+            (Value::Object(left_obj), Value::Object(right_obj)) => left_obj == right_obj,
+            (Value::Function(left_fn), Value::Function(right_fn)) => Rc::ptr_eq(left_fn, right_fn),
             _ => false,
         }
     }
@@ -116,24 +111,24 @@ impl Value {
     }
 
     pub fn as_number(&self) -> Option<f64> {
-        if let Value::Number(n, _) = self {
-            Some(*n)
+        if let Value::Number(numeric_value, _) = self {
+            Some(*numeric_value)
         } else {
             None
         }
     }
 
     pub fn as_string(&self) -> Option<&str> {
-        if let Value::String(s) = self {
-            Some(s.as_ref())
+        if let Value::String(string_ref) = self {
+            Some(string_ref.as_ref())
         } else {
             None
         }
     }
 
     pub fn as_bool(&self) -> Option<bool> {
-        if let Value::Bool(b) = self {
-            Some(*b)
+        if let Value::Bool(bool_value) = self {
+            Some(*bool_value)
         } else {
             None
         }
@@ -290,7 +285,6 @@ pub fn lexer<'a>()
         .then_ignore(just('"'))
         .map(Token::String);
 
-    // Template string escape sequences
     let template_escape = just('\\').ignore_then(choice((
         just('\\'),
         just('`'),
@@ -300,8 +294,7 @@ pub fn lexer<'a>()
         just('t').to('\t'),
     )));
 
-    // Helper to parse expression content inside ${...} tracking nested braces
-    let expr_content = recursive(|nested| {
+    let interpolation_expression = recursive(|nested| {
         choice((
             none_of("{}\"'`").map(|c: char| c.to_string()),
             just('{').ignore_then(nested.clone()).then_ignore(just('}')).map(|s| format!("{{{}}}", s)),
@@ -321,25 +314,18 @@ pub fn lexer<'a>()
         .map(|v| v.join(""))
     });
 
-    // Template chunk - either a character or an interpolation expression
     #[derive(Clone)]
     enum TemplateChunk {
         Char(char),
-        Expr(String),
+        Interpolation(String),
     }
 
-    // Template literal parser - handles `...${...}...`
     let template_literal = just('`').ignore_then(
         choice((
-            // Interpolation: ${expr}
-            just("${").ignore_then(expr_content).then_ignore(just('}')).map(TemplateChunk::Expr),
-            // Escaped characters
+            just("${").ignore_then(interpolation_expression).then_ignore(just('}')).map(TemplateChunk::Interpolation),
             template_escape.map(TemplateChunk::Char),
-            // Regular characters (not `, \, or $)
             none_of("\\`$").map(TemplateChunk::Char),
-            // $ not followed by { is literal $
             just('$').then_ignore(none_of("{").rewind()).map(|_| TemplateChunk::Char('$')),
-            // $ at end of string before `
             just('$').then_ignore(just('`').rewind()).map(|_| TemplateChunk::Char('$')),
         ))
         .repeated()
@@ -352,12 +338,12 @@ pub fn lexer<'a>()
         
         for chunk in chunks {
             match chunk {
-                TemplateChunk::Char(c) => current_text.push(c),
-                TemplateChunk::Expr(expr) => {
+                TemplateChunk::Char(character) => current_text.push(character),
+                TemplateChunk::Interpolation(expression) => {
                     if !current_text.is_empty() {
                         parts.push((false, std::mem::take(&mut current_text)));
                     }
-                    parts.push((true, expr));
+                    parts.push((true, expression));
                 }
             }
         }
@@ -365,22 +351,18 @@ pub fn lexer<'a>()
             parts.push((false, current_text));
         }
         
-        // Check if there are any interpolations
-        let has_exprs = parts.iter().any(|(is_expr, _)| *is_expr);
+        let has_interpolations = parts.iter().any(|(is_interpolation, _)| *is_interpolation);
         
-        if !has_exprs {
-            // Simple template literal
-            let text = parts.into_iter().map(|(_, s)| s).collect::<String>();
+        if !has_interpolations {
+            let text = parts.into_iter().map(|(_, content)| content).collect::<String>();
             Token::TemplateFull(text)
         } else {
-            // Template with interpolations - encode for parser
-            // Format: TPL:TEXT:...\x00EXPR:...\x00TEXT:...
             let mut encoded = String::from("TPL:");
-            for (i, (is_expr, content)) in parts.iter().enumerate() {
-                if i > 0 {
+            for (index, (is_interpolation, content)) in parts.iter().enumerate() {
+                if index > 0 {
                     encoded.push('\x00');
                 }
-                if *is_expr {
+                if *is_interpolation {
                     encoded.push_str("EXPR:");
                 } else {
                     encoded.push_str("TEXT:");
