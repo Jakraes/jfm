@@ -96,6 +96,19 @@ root.items.length          // Array length
 let status = age >= 18 ? "adult" : "minor";
 let grade = score > 90 ? "A" : score > 80 ? "B" : "C";
 
+// Match expression (like Rust)
+let result = match status_code {
+    200 => "OK",
+    404 => "Not Found",
+    500 => "Server Error",
+    _ => "Unknown"
+};
+let label = match value {
+    1 => "one",
+    2 => "two", 
+    _ => "many"
+};
+
 // Null coalescing
 let name = user.nickname ?? user.name ?? "Anonymous";
 let config = settings?.theme ?? "default";
@@ -105,13 +118,6 @@ let config = settings?.theme ?? "default";
 
 // Range
 1..5               // [1, 2, 3, 4, 5]
-
-// Spread operator
-let base = { a: 1, b: 2 };
-let extended = { ...base, c: 3 };  // { a: 1, b: 2, c: 3 }
-
-let arr1 = [1, 2];
-let arr2 = [0, ...arr1, 3];        // [0, 1, 2, 3]
 
 // Concatenation
 "a" + "b"          // "ab"
@@ -222,11 +228,6 @@ let html = `
 | `every(arr, fn)` | All match? | `every([2,4], x => x % 2 == 0)` → true |
 | `some(arr, fn)` | Any match? | `some([1,2], x => x > 1)` → true |
 | `reduce(arr, fn, init)` | Reduce | `reduce([1,2,3], (a,v) => a+v, 0)` → 6 |
-| `enumerate(arr)` | Index-value pairs | `enumerate(["a","b"])` → [[0,"a"],[1,"b"]] |
-| `replicate(n, fn)` | Generate n items | `replicate(3, i => i*10)` → [0,10,20] |
-| `range(start, end, step?)` | Number sequence | `range(0, 10, 2)` → [0,2,4,6,8,10] |
-| `cross(arr1, arr2, ...)` | Cartesian product | `cross([1,2], ["a","b"])` → [[1,"a"],[1,"b"],[2,"a"],[2,"b"]] |
-| `clone(v)` | Deep clone | `clone(obj)` → new copy |
 
 ### String
 
@@ -251,9 +252,7 @@ let html = `
 | `values(obj)` | Get values | `values({"a":1})` → [1] |
 | `entries(obj)` | Key-value pairs | `entries({"a":1})` → [["a",1]] |
 | `has(obj, key)` | Has key? | `has({"a":1}, "a")` → true |
-| `merge(o1, o2)` | Shallow merge | `merge({"a":1}, {"b":2})` |
-| `deep_merge(o1, o2)` | Deep recursive merge | `deep_merge({a:{x:1}}, {a:{y:2}})` → {a:{x:1,y:2}} |
-| `set_path(obj, path, val)` | Set nested path | `set_path({}, "a.b.c", 1)` → {a:{b:{c:1}}} |
+| `merge(o1, o2)` | Merge objects | `merge({"a":1}, {"b":2})` |
 
 ### Type
 
@@ -268,6 +267,9 @@ let html = `
 | `is_bool(v)` | Is bool? | `is_bool(true)` → true |
 | `to_string(v)` | Convert to string | `to_string(42)` → "42" |
 | `to_number(v)` | Convert to number | `to_number("42")` → 42 |
+| `to_int(v)` | Convert to integer (truncate) | `to_int(3.7)` → 3 |
+| `to_float(v)` | Convert to float | `to_float(42)` → 42.0 |
+| `to_bool(v)` | Convert to boolean | `to_bool(0)` → false |
 | `parse_json(s)` | Parse JSON string | `parse_json("[1,2]")` → [1,2] |
 
 ### Math
@@ -373,49 +375,6 @@ fn process(data) { data | .active == true | .name }
 // main query
 let result = include("utils.jfm");
 process(root.users)
-```
-
-### Test Data Generation
-
-Generate test data with templates and combinations:
-
-```jfm
-// Base templates
-let base_user = { role: "customer", active: true };
-let base_product = { category: "electronics", in_stock: true };
-
-// Generate 100 users with spread operator
-let users = replicate(100, i => ({
-    ...base_user,
-    id: i,
-    loyalty_points: 1000 + i
-}));
-
-// Generate test matrix with cross product
-let test_cases = cross(
-    ["small", "medium", "large"],  // sizes
-    [9.99, 19.99, 29.99],            // price points
-    ["red", "blue", "green"]        // colors
-);
-
-// Create products with deep merge for config overlays
-let products = replicate(4, i => 
-    deep_merge(base_product, { 
-        details: { sku: i, shipping: { weight: 100 + i * 10 } }
-    })
-);
-
-// Set nested paths
-let config = set_path({}, "store.warehouse.capacity", 500);
-
-// Iterate with index using enumerate
-for pair in enumerate(users) {
-    let idx = pair[0];
-    let user = pair[1];
-    user.tier = idx % 3;
-}
-
-{ products: products, users: users, test_cases: test_cases };
 ```
 
 ## Notes

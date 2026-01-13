@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Environment {
     variables: Rc<RefCell<HashMap<String, Value>>>,
     parent: Option<Rc<Environment>>,
@@ -11,7 +11,10 @@ pub struct Environment {
 
 impl Environment {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            variables: Rc::new(RefCell::new(HashMap::new())),
+            parent: None,
+        }
     }
 
     pub fn with_parent(parent: Rc<Environment>) -> Self {

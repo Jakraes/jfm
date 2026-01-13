@@ -18,6 +18,7 @@ pub enum Token {
     Break,
     Continue,
     Fn,
+    Match,
 
     Ident(String),
     Number(f64, bool),
@@ -50,7 +51,6 @@ pub enum Token {
     SlashEq,
     PipeEq,
     DotDot,
-    Spread,
     Arrow,
     Comma,
     Colon,
@@ -223,11 +223,9 @@ pub enum ExprKind {
     },
     Object {
         fields: Vec<(String, Expr)>,
-        spreads: Vec<(usize, Expr)>,
     },
     Array {
         elements: Vec<Expr>,
-        spreads: Vec<(usize, Expr)>,
     },
     Lambda {
         params: Vec<Rc<str>>,
@@ -258,7 +256,17 @@ pub enum ExprKind {
     TemplateLiteral {
         parts: Vec<TemplatePart>,
     },
+    Match {
+        value: Box<Expr>,
+        arms: Vec<(MatchPattern, Expr)>,
+    },
     Grouped(Box<Expr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MatchPattern {
+    Literal(Value),
+    Wildcard,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -389,6 +397,7 @@ pub fn lexer<'a>()
         "break" => Token::Break,
         "continue" => Token::Continue,
         "fn" => Token::Fn,
+        "match" => Token::Match,
         "true" => Token::True,
         "false" => Token::False,
         "null" => Token::Null,
@@ -407,7 +416,6 @@ pub fn lexer<'a>()
         just("*=").to(Token::StarEq),
         just("/=").to(Token::SlashEq),
         just("|=").to(Token::PipeEq),
-        just("...").to(Token::Spread),
         just("..").to(Token::DotDot),
         just("=>").to(Token::Arrow),
         just("?.").to(Token::QuestionDot),

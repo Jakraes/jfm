@@ -8,14 +8,15 @@ use chumsky::Parser;
 use std::rc::Rc;
 use std::cell::RefCell;
 
-#[derive(Default)]
 pub struct Interpreter {
     env: Environment,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            env: Environment::new(),
+        }
     }
 
     pub fn with_root(root: Value) -> Self {
@@ -63,7 +64,7 @@ impl Interpreter {
                         }
                         ControlFlow::Break | ControlFlow::Continue => {
                             self.env = (*old_env).clone();
-                            return self.execute_stmt(s);
+                            return Ok(self.execute_stmt(s)?);
                         }
                         ControlFlow::Value(_) | ControlFlow::Next => {}
                     }
@@ -244,52 +245,18 @@ impl Interpreter {
 
             ExprKind::Grouped(expr) => self.eval_expr(expr),
 
-            ExprKind::Array { elements, spreads } => {
+            ExprKind::Array { elements } => {
                 let mut vals = Vec::new();
-                let mut spread_values: Vec<(usize, Value)> = Vec::new();
-                for (idx, spread_expr) in spreads {
-                    spread_values.push((*idx, self.eval_expr(spread_expr)?));
-                }
-                let mut spread_iter = spread_values.iter().peekable();
-                for (i, e) in elements.iter().enumerate() {
-                    while spread_iter.peek().map(|(idx, _)| *idx == i).unwrap_or(false) {
-                        if let (_, Value::Array(arr)) = spread_iter.next().unwrap() {
-                            vals.extend(arr.borrow().iter().cloned());
-                        }
-                    }
+                for e in elements {
                     vals.push(self.eval_expr(e)?);
-                }
-                for (_, spread_val) in spread_iter {
-                    if let Value::Array(arr) = spread_val {
-                        vals.extend(arr.borrow().iter().cloned());
-                    }
                 }
                 Ok(Value::Array(Rc::new(RefCell::new(vals))))
             }
 
-            ExprKind::Object { fields, spreads } => {
+            ExprKind::Object { fields } => {
                 let mut map = indexmap::IndexMap::new();
-                let mut spread_values: Vec<(usize, Value)> = Vec::new();
-                for (idx, spread_expr) in spreads {
-                    spread_values.push((*idx, self.eval_expr(spread_expr)?));
-                }
-                let mut spread_iter = spread_values.iter().peekable();
-                for (i, (k, v)) in fields.iter().enumerate() {
-                    while spread_iter.peek().map(|(idx, _)| *idx == i).unwrap_or(false) {
-                        if let (_, Value::Object(obj)) = spread_iter.next().unwrap() {
-                            for (sk, sv) in obj.borrow().iter() {
-                                map.insert(sk.clone(), sv.clone());
-                            }
-                        }
-                    }
+                for (k, v) in fields {
                     map.insert(k.clone(), self.eval_expr(v)?);
-                }
-                for (_, spread_val) in spread_iter {
-                    if let Value::Object(obj) = spread_val {
-                        for (sk, sv) in obj.borrow().iter() {
-                            map.insert(sk.clone(), sv.clone());
-                        }
-                    }
                 }
                 Ok(Value::Object(Rc::new(RefCell::new(map))))
             }
@@ -309,8 +276,10 @@ impl Interpreter {
                     arg_vals.push(self.eval_expr(a)?);
                 }
                 
-                if let Some(Value::Function(func)) = self.env.get(name.as_ref()) {
-                    return self.call_user_function(&func, arg_vals);
+                if let Some(func_val) = self.env.get(name.as_ref()) {
+                    if let Value::Function(func) = func_val {
+                        return self.call_user_function(&func, arg_vals);
+                    }
                 }
                 
                 self.call_function(name, arg_vals)
@@ -382,6 +351,29 @@ impl Interpreter {
                 }
                 Ok(Value::String(Rc::from(result)))
             }
+
+            ExprKind::Match { value, arms } => {
+                use crate::lexer::MatchPattern;
+                let val = self.eval_expr(value)?;
+                
+                for (pattern, result_expr) in arms {
+                    match pattern {
+                        MatchPattern::Wildcard => {
+                            return self.eval_expr(result_expr);
+                        }
+                        MatchPattern::Literal(pattern_val) => {
+                            if self.values_equal(&val, pattern_val) {
+                                return self.eval_expr(result_expr);
+                            }
+                        }
+                    }
+                }
+                
+                Err(InterpreterError::invalid_operation_at(
+                    "No matching pattern in match expression",
+                    expr.span,
+                ))
+            }
         }
     }
 
@@ -406,30 +398,19 @@ impl Interpreter {
             ExprKind::ArrayIndex { array, index } => {
                 let arr_val = self.eval_expr(array)?;
                 let idx_val = self.eval_expr(index)?;
+                let idx = match idx_val {
+                    Value::Number(n, _) => n as usize,
+                    _ => return Err(InterpreterError::type_error("Index must be a number")),
+                };
 
                 match arr_val {
                     Value::Array(items_rc) => {
                         let mut items = items_rc.borrow_mut();
-                        let len = items.len();
-                        let idx = match idx_val {
-                            Value::Number(n, _) => {
-                                if n < 0.0 {
-                                    let neg_idx = (n as i64).unsigned_abs() as usize;
-                                    if neg_idx > len {
-                                        return Err(InterpreterError::index_out_of_bounds_at(neg_idx, len, target.span));
-                                    }
-                                    len - neg_idx
-                                } else {
-                                    n as usize
-                                }
-                            }
-                            _ => return Err(InterpreterError::type_error("Index must be a number")),
-                        };
-                        if idx < len {
+                        if idx < items.len() {
                             items[idx] = value.clone();
                             Ok(value)
                         } else {
-                            Err(InterpreterError::index_out_of_bounds_at(idx, len, target.span))
+                            Err(InterpreterError::index_out_of_bounds_at(idx, items.len(), target.span))
                         }
                     }
                     _ => Err(InterpreterError::type_error("Cannot index non-array")),
@@ -440,6 +421,22 @@ impl Interpreter {
     }
     
     fn eval_smart_pipe(&mut self, left: Value, right: &Expr) -> Result<Value, InterpreterError> {
+        // Check if the right side is a function call - if so, prepend left as first argument
+        if let ExprKind::Call { name, args } = &right.kind {
+            let mut arg_vals = vec![left];
+            for a in args {
+                arg_vals.push(self.eval_expr(a)?);
+            }
+            
+            if let Some(func_val) = self.env.get(name.as_ref()) {
+                if let Value::Function(func) = func_val {
+                    return self.call_user_function(&func, arg_vals);
+                }
+            }
+            
+            return self.call_function(name, arg_vals);
+        }
+        
         match left {
             Value::Array(items_rc) => {
                 let mut results = Vec::new();
@@ -483,8 +480,10 @@ impl Interpreter {
     }
 
     fn call_function(&mut self, name: &str, args: Vec<Value>) -> Result<Value, InterpreterError> {
-        if matches!(name, "find" | "find_index" | "reduce" | "every" | "some") {
+        if matches!(name, "map" | "filter" | "find" | "find_index" | "reduce" | "every" | "some") {
             return match name {
+                "map" => builtins::builtin_map(&args, |func, call_args| self.call_function_value(func, call_args)),
+                "filter" => builtins::builtin_filter(&args, |func, call_args| self.call_function_value(func, call_args)),
                 "find" => builtins::builtin_find(&args, |func, call_args| self.call_function_value(func, call_args)),
                 "find_index" => builtins::builtin_find_index(&args, |func, call_args| self.call_function_value(func, call_args)),
                 "reduce" => builtins::builtin_reduce(&args, |func, call_args| self.call_function_value(func, call_args)),
@@ -542,6 +541,9 @@ impl Interpreter {
             "is_bool" => builtins::builtin_is_bool(&args),
             "to_string" => builtins::builtin_to_string(&args, |v| self.value_to_string(v)),
             "to_number" => builtins::builtin_to_number(&args),
+            "to_int" => builtins::builtin_to_int(&args),
+            "to_float" => builtins::builtin_to_float(&args),
+            "to_bool" => builtins::builtin_to_bool(&args),
             "parse_json" => builtins::builtin_parse_json(&args),
             "floor" => builtins::builtin_floor(&args),
             "ceil" => builtins::builtin_ceil(&args),
@@ -553,13 +555,6 @@ impl Interpreter {
             "cos" => builtins::builtin_cos(&args),
             "tan" => builtins::builtin_tan(&args),
             "random" => builtins::builtin_random(&args),
-            "replicate" => builtins::builtin_replicate(&args, |func, call_args| self.call_function_value(func, call_args)),
-            "enumerate" => builtins::builtin_enumerate(&args),
-            "range" => builtins::builtin_range_fn(&args),
-            "deep_merge" => builtins::builtin_deep_merge(&args),
-            "cross" => builtins::builtin_cross(&args),
-            "set_path" => builtins::builtin_set_path(&args),
-            "clone" => builtins::builtin_clone(&args),
             _ => Err(InterpreterError::invalid_operation(format!("Unknown function: {}", name))),
         }
     }
@@ -647,9 +642,11 @@ impl Interpreter {
                 }
             }
             Value::Null => {
-                if let Some(Value::Object(map)) = self.env.get("_it") {
-                    return map.borrow().get(field).cloned()
-                        .ok_or_else(|| InterpreterError::field_not_found(field));
+                if let Some(it) = self.env.get("_it") {
+                    if let Value::Object(map) = it {
+                        return map.borrow().get(field).cloned()
+                            .ok_or_else(|| InterpreterError::field_not_found(field));
+                    }
                 }
                 Ok(Value::Null)
             }
@@ -663,16 +660,8 @@ impl Interpreter {
     fn get_index(&self, arr: &Value, idx: &Value) -> Result<Value, InterpreterError> {
         match (arr, idx) {
             (Value::Array(items), Value::Number(n, _)) => {
+                let index = *n as usize;
                 let len = items.borrow().len();
-                let index = if *n < 0.0 {
-                    let neg_idx = (*n as i64).unsigned_abs() as usize;
-                    if neg_idx > len {
-                        return Err(InterpreterError::index_out_of_bounds(neg_idx, len));
-                    }
-                    len - neg_idx
-                } else {
-                    *n as usize
-                };
                 items
                     .borrow()
                     .get(index)
@@ -702,13 +691,7 @@ impl Interpreter {
                     Ok(Value::Number(left_num / right_num, true))
                 }
             }
-            (Value::Number(left_num, left_float), BinaryOp::Mod, Value::Number(right_num, right_float)) => {
-                if *right_num == 0.0 {
-                    Err(InterpreterError::division_by_zero())
-                } else {
-                    Ok(Value::Number(left_num % right_num, *left_float || *right_float))
-                }
-            }
+            (Value::Number(left_num, left_float), BinaryOp::Mod, Value::Number(right_num, right_float)) => Ok(Value::Number(left_num % right_num, *left_float || *right_float)),
             (Value::Number(base, _), BinaryOp::Pow, Value::Number(exponent, _)) => Ok(Value::Number(base.powf(*exponent), true)),
             (Value::String(left_str), BinaryOp::Add, Value::String(right_str)) => {
                 let mut combined = String::with_capacity(left_str.len() + right_str.len());

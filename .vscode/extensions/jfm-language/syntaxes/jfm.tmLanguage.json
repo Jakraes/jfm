@@ -133,7 +133,7 @@
             "patterns": [
                 {
                     "name": "keyword.control.jfm",
-                    "match": "\\b(if|else|for|in|while|break|continue|return)\\b"
+                    "match": "\\b(if|else|for|in|while|break|continue|return|match)\\b"
                 },
                 {
                     "name": "keyword.declaration.jfm",
@@ -145,7 +145,7 @@
             "patterns": [
                 {
                     "name": "support.function.array.jfm",
-                    "match": "\\b(count|sum|avg|min|max|take|unique|sort|sort_by|group_by|reverse|slice|push|pop|shift|flat|flatten|first|last|zip|find|find_index|every|some|reduce|filter|map|enumerate|replicate|range|cross|clone)\\b"
+                    "match": "\\b(count|sum|avg|min|max|take|unique|sort|sort_by|group_by|reverse|slice|push|pop|shift|flat|flatten|first|last|zip|find|find_index|every|some|reduce|filter|map)\\b"
                 },
                 {
                     "name": "support.function.string.jfm",
@@ -153,11 +153,11 @@
                 },
                 {
                     "name": "support.function.object.jfm",
-                    "match": "\\b(keys|values|entries|has|merge|deep_merge|set_path)\\b"
+                    "match": "\\b(keys|values|entries|has|merge)\\b"
                 },
                 {
                     "name": "support.function.type.jfm",
-                    "match": "\\b(typeof|is_null|is_array|is_object|is_string|is_number|is_bool|to_string|to_number|parse_json)\\b"
+                    "match": "\\b(typeof|is_null|is_array|is_object|is_string|is_number|is_bool|to_string|to_number|to_int|to_float|to_bool|parse_json)\\b"
                 },
                 {
                     "name": "support.function.math.jfm",
@@ -226,10 +226,6 @@
                 {
                     "name": "keyword.operator.pipe.jfm",
                     "match": "\\|"
-                },
-                {
-                    "name": "keyword.operator.spread.jfm",
-                    "match": "\\.\\.\\."
                 },
                 {
                     "name": "keyword.operator.range.jfm",

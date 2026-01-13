@@ -1,5 +1,5 @@
 use crate::diagnostic::{Diagnostic, Label, Span};
-use crate::lexer::{BinaryOp, Expr, ExprKind, Stmt, Token, UnaryOp, Value};
+use crate::lexer::{BinaryOp, Expr, ExprKind, MatchPattern, Stmt, Token, UnaryOp, Value};
 use chumsky::Parser as _;
 use std::rc::Rc;
 
@@ -849,16 +849,9 @@ impl TokenParser {
             Token::LBracket => {
                 let start_span = span;
                 let mut elements = Vec::new();
-                let mut spreads = Vec::new();
                 if !matches!(self.current_token(), Some(Token::RBracket)) {
                     loop {
-                        if matches!(self.current_token(), Some(Token::Spread)) {
-                            self.advance();
-                            let spread_expr = self.parse_expression()?;
-                            spreads.push((elements.len(), spread_expr));
-                        } else {
-                            elements.push(self.parse_expression()?);
-                        }
+                        elements.push(self.parse_expression()?);
                         if matches!(self.current_token(), Some(Token::Comma)) {
                             self.advance();
                         } else {
@@ -868,37 +861,30 @@ impl TokenParser {
                 }
                 let end_span = self.expect(Token::RBracket)?;
                 Ok(Expr {
-                    kind: ExprKind::Array { elements, spreads },
+                    kind: ExprKind::Array { elements },
                     span: start_span.merge(end_span),
                 })
             }
             Token::LBrace => {
                 let start_span = span;
                 let mut fields = Vec::new();
-                let mut spreads = Vec::new();
                 if !matches!(self.current_token(), Some(Token::RBrace)) {
                     loop {
-                        if matches!(self.current_token(), Some(Token::Spread)) {
-                            self.advance();
-                            let spread_expr = self.parse_expression()?;
-                            spreads.push((fields.len(), spread_expr));
-                        } else {
-                            let key = match self.advance() {
-                                Some(SpannedToken { token: Token::Ident(key_name), .. }) => key_name,
-                                Some(SpannedToken { token: Token::String(key_name), .. }) => key_name,
-                                other => {
-                                    let err_span =
-                                        other.map(|st| st.span).unwrap_or(self.current_span());
-                                    return Err(ParseError::new(
-                                        "expected identifier or string for object key",
-                                        err_span,
-                                    ));
-                                }
-                            };
-                            self.expect(Token::Colon)?;
-                            let value = self.parse_expression()?;
-                            fields.push((key, value));
-                        }
+                        let key = match self.advance() {
+                            Some(SpannedToken { token: Token::Ident(key_name), .. }) => key_name,
+                            Some(SpannedToken { token: Token::String(key_name), .. }) => key_name,
+                            other => {
+                                let err_span =
+                                    other.map(|st| st.span).unwrap_or(self.current_span());
+                                return Err(ParseError::new(
+                                    "expected identifier or string for object key",
+                                    err_span,
+                                ));
+                            }
+                        };
+                        self.expect(Token::Colon)?;
+                        let value = self.parse_expression()?;
+                        fields.push((key, value));
                         if matches!(self.current_token(), Some(Token::Comma)) {
                             self.advance();
                         } else {
@@ -908,7 +894,7 @@ impl TokenParser {
                 }
                 let end_span = self.expect(Token::RBrace)?;
                 Ok(Expr {
-                    kind: ExprKind::Object { fields, spreads },
+                    kind: ExprKind::Object { fields },
                     span: start_span.merge(end_span),
                 })
             }
@@ -937,11 +923,103 @@ impl TokenParser {
                     span: full_span,
                 })
             }
+            Token::Match => self.parse_match_expression(span),
             _ => Err(ParseError::new(
                 format!("unexpected token: {:?}", token),
                 span,
             )
             .with_expected(vec!["expression".to_string()])),
+        }
+    }
+
+    fn parse_match_expression(&mut self, start_span: Span) -> Result<Expr, ParseError> {
+        // Parse the value being matched
+        let value = self.parse_expression()?;
+        
+        self.expect(Token::LBrace)?;
+        
+        let mut arms = Vec::new();
+        
+        while !matches!(self.current_token(), Some(Token::RBrace)) && self.current_token().is_some() {
+            // Parse the pattern
+            let pattern = self.parse_match_pattern()?;
+            
+            self.expect(Token::Arrow)?;
+            
+            // Parse the result expression
+            let result = self.parse_expression()?;
+            
+            arms.push((pattern, result));
+            
+            // Optional comma between arms
+            if matches!(self.current_token(), Some(Token::Comma)) {
+                self.advance();
+            }
+        }
+        
+        let end_span = self.expect(Token::RBrace)?;
+        
+        Ok(Expr {
+            kind: ExprKind::Match {
+                value: Box::new(value),
+                arms,
+            },
+            span: start_span.merge(end_span),
+        })
+    }
+
+    fn parse_match_pattern(&mut self) -> Result<MatchPattern, ParseError> {
+        let token = self.current_token().cloned();
+        
+        match token {
+            // Wildcard pattern: _
+            Some(Token::Ident(ref name)) if name == "_" => {
+                self.advance();
+                Ok(MatchPattern::Wildcard)
+            }
+            // Number literal
+            Some(Token::Number(n, is_float)) => {
+                self.advance();
+                Ok(MatchPattern::Literal(Value::Number(n, is_float)))
+            }
+            // String literal
+            Some(Token::String(s)) => {
+                self.advance();
+                Ok(MatchPattern::Literal(Value::String(Rc::from(s.as_str()))))
+            }
+            // Boolean literals
+            Some(Token::True) => {
+                self.advance();
+                Ok(MatchPattern::Literal(Value::Bool(true)))
+            }
+            Some(Token::False) => {
+                self.advance();
+                Ok(MatchPattern::Literal(Value::Bool(false)))
+            }
+            // Null literal
+            Some(Token::Null) => {
+                self.advance();
+                Ok(MatchPattern::Literal(Value::Null))
+            }
+            // Negative numbers
+            Some(Token::Minus) => {
+                self.advance();
+                match self.current_token().cloned() {
+                    Some(Token::Number(n, is_float)) => {
+                        self.advance();
+                        Ok(MatchPattern::Literal(Value::Number(-n, is_float)))
+                    }
+                    _ => Err(ParseError::new(
+                        "expected number after '-' in match pattern",
+                        self.current_span(),
+                    )),
+                }
+            }
+            _ => Err(ParseError::new(
+                "expected pattern (literal or _)",
+                self.current_span(),
+            )
+            .with_expected(vec!["pattern".to_string()])),
         }
     }
 }
