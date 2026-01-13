@@ -1,12 +1,15 @@
 use jfm::interpreter;
 use jfm::json;
 use std::cell::RefCell;
-use clap::Parser;
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::{generate, Shell};
 use std::path::{Path, PathBuf};
-use std::io::{self, Write};
+use std::io::{self, Write, Read};
+use owo_colors::OwoColorize;
 
 #[derive(Parser, Debug)]
 #[command(name = "jfm")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "JSON query language interpreter", long_about = None)]
 struct Args {
     #[arg(value_name = "JSON")]
@@ -23,53 +26,161 @@ struct Args {
 
     #[arg(short, long, value_name = "OUTPUT_FILE")]
     out: Option<PathBuf>,
+
+    #[arg(long = "color", value_name = "WHEN", default_value = "auto")]
+    color: ColorChoice,
+
+    #[arg(long = "compact")]
+    compact: bool,
+
+    #[arg(short = 'v', long = "verbose")]
+    verbose: bool,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    Complete {
+        #[arg(value_name = "SHELL")]
+        shell: Shell,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ColorChoice {
+    Auto,
+    Always,
+    Never,
+}
+
+impl std::str::FromStr for ColorChoice {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "auto" => Ok(ColorChoice::Auto),
+            "always" => Ok(ColorChoice::Always),
+            "never" => Ok(ColorChoice::Never),
+            _ => Err(format!("Invalid color choice: {}. Must be 'auto', 'always', or 'never'", s)),
+        }
+    }
+}
+
+struct AppConfig {
+    color_enabled: bool,
+    compact: bool,
+    verbose: bool,
+}
+
+impl AppConfig {
+    fn from_args(args: &Args) -> Self {
+        let color_enabled = match args.color {
+            ColorChoice::Always => true,
+            ColorChoice::Never => false,
+            ColorChoice::Auto => atty::is(atty::Stream::Stderr) && atty::is(atty::Stream::Stdout),
+        };
+
+        AppConfig {
+            color_enabled,
+            compact: args.compact,
+            verbose: args.verbose,
+        }
+    }
 }
 
 fn main() {
     let args = Args::parse();
 
-    let json_str = if let Some(file) = args.file {
-        read_file(&file).unwrap_or_else(|e| {
-            eprintln!("{}", e);
+    if let Some(Commands::Complete { shell }) = args.command {
+        generate_completions(shell);
+        return;
+    }
+
+    let config = AppConfig::from_args(&args);
+
+    verbose_log(&config, "Starting jfm");
+
+    let json_str = match read_json_input(&args, &config) {
+        Ok(s) => s,
+        Err(e) => {
+            error_message(&config, &e);
             std::process::exit(1);
-        })
-    } else if let Some(json) = args.json {
-        json
-    } else {
-        eprintln!("Error: Must provide either --file or JSON string");
-        std::process::exit(1);
+        }
     };
 
+    verbose_log(&config, &format!("Read {} bytes of JSON input", json_str.len()));
+
     let root_value = match json::parse_json(&json_str) {
-        Ok(val) => convert_json_to_internal(val),
+        Ok(val) => {
+            verbose_log(&config, "Successfully parsed JSON");
+            convert_json_to_internal(val)
+        }
         Err(e) => {
-            eprintln!("JSON parse error: {}", e);
+            error_message(&config, &format!("JSON parse error: {}", e));
             std::process::exit(1);
         }
     };
 
     if args.query.is_none() && args.query_file.is_none() {
-        run_interactive_mode(root_value, &args.out);
+        run_interactive_mode(root_value, &args.out, &config);
     } else {
-        let query_str = if let Some(query) = args.query {
-            query
-        } else if let Some(query_file) = args.query_file {
-            read_file(&query_file).unwrap_or_else(|e| {
-                eprintln!("{}", e);
+        let query_str = match read_query_input(&args, &config) {
+            Ok(s) => s,
+            Err(e) => {
+                error_message(&config, &e);
                 std::process::exit(1);
-            })
-        } else {
-            unreachable!();
+            }
         };
 
-        execute_query(&query_str, &root_value, &args.out, false);
+        verbose_log(&config, &format!("Executing query: {}", query_str));
+        execute_query(&query_str, &root_value, &args.out, false, &config);
     }
 }
 
-fn run_interactive_mode(root_value: jfm::lexer::Value, out_file: &Option<PathBuf>) {
-    println!("jfm Interactive Query Editor");
-    println!("Type your query (multi-line supported). Exit with Ctrl+D (Ctrl+Z on Windows) or type 'exit' on a new line.");
-    println!();
+fn read_json_input(args: &Args, config: &AppConfig) -> Result<String, String> {
+    if let Some(file) = &args.file {
+        verbose_log(config, &format!("Reading JSON from file: {}", file.display()));
+        read_file(file)
+    } else if let Some(json) = &args.json {
+        verbose_log(config, "Reading JSON from command-line argument");
+        Ok(json.clone())
+    } else {
+        verbose_log(config, "Reading JSON from stdin");
+        let mut buffer = String::new();
+        io::stdin()
+            .read_to_string(&mut buffer)
+            .map_err(|e| format!("Failed to read from stdin: {}", e))?;
+        
+        if buffer.trim().is_empty() {
+            return Err("No input provided. Must provide --file, JSON string argument, or JSON via stdin".to_string());
+        }
+        
+        Ok(buffer)
+    }
+}
+
+fn read_query_input(args: &Args, config: &AppConfig) -> Result<String, String> {
+    if let Some(query) = &args.query {
+        verbose_log(config, "Using query from command-line argument");
+        Ok(query.clone())
+    } else if let Some(query_file) = &args.query_file {
+        verbose_log(config, &format!("Reading query from file: {}", query_file.display()));
+        read_file(query_file)
+    } else {
+        unreachable!("Should have query or query-file if not in interactive mode");
+    }
+}
+
+fn run_interactive_mode(root_value: jfm::lexer::Value, out_file: &Option<PathBuf>, config: &AppConfig) {
+    if !config.verbose {
+        println!("jfm Interactive Query Editor");
+        println!("Type your query (multi-line supported). Exit with Ctrl+D (Ctrl+Z on Windows) or type 'exit' on a new line.");
+        println!();
+    } else {
+        verbose_log(config, "Entering interactive mode");
+    }
 
     let mut query = String::new();
 
@@ -90,7 +201,7 @@ fn run_interactive_mode(root_value: jfm::lexer::Value, out_file: &Option<PathBuf
                 query.push_str(&line);
             }
             Err(e) => {
-                eprintln!("Error reading input: {}", e);
+                error_message(config, &format!("Error reading input: {}", e));
                 break;
             }
         }
@@ -98,24 +209,29 @@ fn run_interactive_mode(root_value: jfm::lexer::Value, out_file: &Option<PathBuf
 
     let trimmed_query = query.trim();
     if trimmed_query.is_empty() {
-        eprintln!("No query entered.");
+        error_message(config, "No query entered.");
         std::process::exit(1);
     }
 
-    execute_query(trimmed_query, &root_value, out_file, false);
+    verbose_log(config, &format!("Executing interactive query: {}", trimmed_query));
+    execute_query(trimmed_query, &root_value, out_file, true, config);
 }
 
-fn execute_query(query_str: &str, root_value: &jfm::lexer::Value, out_file: &Option<PathBuf>, is_interactive: bool) {
+fn execute_query(query_str: &str, root_value: &jfm::lexer::Value, out_file: &Option<PathBuf>, is_interactive: bool, config: &AppConfig) {
+    verbose_log(config, "Parsing query");
+    
     let result = match interpreter::parse_and_run(query_str, root_value.clone()) {
         Ok(Some(result)) => {
-            format!("{}\n", value_to_json_string(&result))
+            verbose_log(config, "Query executed successfully");
+            format!("{}\n", value_to_json_string(&result, config.compact))
         }
         Ok(None) => {
+            verbose_log(config, "Query returned None, outputting empty object");
             "{}\n".to_string()
         }
         Err(e) => {
-            eprintln!("Query error: {}", e);
-            return;
+            error_message(config, &format!("Query error: {}", e));
+            std::process::exit(1);
         }
     };
 
@@ -125,6 +241,8 @@ fn execute_query(query_str: &str, root_value: &jfm::lexer::Value, out_file: &Opt
     }
 
     if let Some(out_path) = out_file {
+        verbose_log(config, &format!("Writing output to file: {}", out_path.display()));
+        
         use std::fs::OpenOptions;
         use std::io::Write;
         
@@ -144,14 +262,22 @@ fn execute_query(query_str: &str, root_value: &jfm::lexer::Value, out_file: &Opt
         match file_result {
             Ok(mut file) => {
                 if let Err(e) = file.write_all(result.as_bytes()) {
-                    eprintln!("Error writing to output file: {}", e);
+                    error_message(config, &format!("Error writing to output file: {}", e));
+                } else {
+                    verbose_log(config, "Successfully wrote output to file");
                 }
             }
             Err(e) => {
-                eprintln!("Error opening output file: {}", e);
+                error_message(config, &format!("Error opening output file: {}", e));
             }
         }
     }
+}
+
+fn generate_completions(shell: Shell) {
+    let mut cmd = Args::command();
+    let bin_name = cmd.get_name().to_string();
+    generate(shell, &mut cmd, &bin_name, &mut io::stdout());
 }
 
 fn read_file(path: &Path) -> Result<String, String> {
@@ -188,8 +314,66 @@ fn convert_json_to_internal(json_val: serde_json::Value) -> jfm::lexer::Value {
     }
 }
 
-fn value_to_json_string(val: &jfm::lexer::Value) -> String {
-    value_to_json_string_with_indent(val, 0)
+fn value_to_json_string(val: &jfm::lexer::Value, compact: bool) -> String {
+    if compact {
+        value_to_json_string_compact(val)
+    } else {
+        value_to_json_string_with_indent(val, 0)
+    }
+}
+
+fn value_to_json_string_compact(val: &jfm::lexer::Value) -> String {
+    use jfm::lexer::Value;
+
+    match val {
+        Value::Null => "null".to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => {
+            if n.fract() == 0.0 {
+                format!("{:.0}", n)
+            } else {
+                n.to_string()
+            }
+        }
+        Value::String(s) => {
+            let escaped = s
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
+                .replace('\t', "\\t");
+            format!("\"{}\"", escaped)
+        }
+        Value::Array(arr) => {
+            let items = arr.borrow();
+            if items.is_empty() {
+                return "[]".to_string();
+            }
+            
+            let elements: Vec<String> = items
+                .iter()
+                .map(|item| value_to_json_string_compact(item))
+                .collect();
+            
+            format!("[{}]", elements.join(","))
+        }
+        Value::Object(obj) => {
+            let map = obj.borrow();
+            if map.is_empty() {
+                return "{}".to_string();
+            }
+            
+            let fields: Vec<String> = map
+                .iter()
+                .map(|(k, v)| format!("\"{}\":{}", k, value_to_json_string_compact(v)))
+                .collect();
+            
+            format!("{{{}}}", fields.join(","))
+        }
+        Value::Function(_) => {
+            "\"<function>\"".to_string()
+        }
+    }
 }
 
 fn value_to_json_string_with_indent(val: &jfm::lexer::Value, indent: usize) -> String {
@@ -279,5 +463,19 @@ fn value_to_json_string_with_indent(val: &jfm::lexer::Value, indent: usize) -> S
         Value::Function(_) => {
             "\"<function>\"".to_string()
         }
+    }
+}
+
+fn verbose_log(config: &AppConfig, message: &str) {
+    if config.verbose {
+        eprintln!("[jfm:debug] {}", message);
+    }
+}
+
+fn error_message(config: &AppConfig, message: &str) {
+    if config.color_enabled {
+        eprintln!("{}", message.red().bold());
+    } else {
+        eprintln!("{}", message);
     }
 }

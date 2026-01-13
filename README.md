@@ -48,8 +48,25 @@ Options:
   -q, --query <QUERY>        Query string to execute
       --query-file <PATH>    Path to file containing query (conflicts with --query)
   -o, --out <OUTPUT_FILE>    Path to output file (default: stdout)
+  -V, --version              Print version information
+      --color <WHEN>         Control colored output [default: auto] [possible values: auto, always, never]
+      --compact              Output minified JSON (no pretty-print)
+  -v, --verbose              Enable verbose/debug mode
   -h, --help                 Print help
+
+Commands:
+  complete <SHELL>           Generate shell completion scripts [possible values: bash, elvish, fish, powershell, zsh]
 ```
+
+**New Options:**
+
+- `-V, --version`: Display version information and exit
+- `--color <WHEN>`: Control colored output for error messages. Options:
+  - `auto`: Automatically enable colors when outputting to a TTY (default)
+  - `always`: Always enable colors
+  - `never`: Disable colors
+- `--compact`: Output JSON in compact/minified format (single line, no indentation)
+- `-v, --verbose`: Enable verbose/debug mode. Debug messages are printed to stderr and do not interfere with JSON output
 
 ### Interactive Mode
 
@@ -117,6 +134,139 @@ jfm --file data.json --query "root.users | .name" --out results.json
 jfm --file data.json --out results.json
 # Type your query interactively
 # Results will be written to results.json
+```
+
+**Reading JSON from stdin:**
+
+When neither `--file` nor a JSON string argument is provided, `jfm` reads JSON from standard input:
+
+```bash
+# Using pipe
+cat data.json | jfm --query "root.users[0].name"
+
+# Using heredoc
+jfm --query "root.users | .age > 25" << EOF
+{
+  "users": [
+    {"name": "Alice", "age": 30},
+    {"name": "Bob", "age": 20}
+  ]
+}
+EOF
+
+# With compact output
+echo '{"result": "success"}' | jfm --query "root.result" --compact
+
+# With verbose mode for debugging
+cat data.json | jfm --query "root.users" --verbose
+```
+
+**Using compact output:**
+
+```bash
+# Pretty-printed output (default)
+jfm --file data.json --query "root.users"
+
+# Compact/minified output
+jfm --file data.json --query "root.users" --compact
+```
+
+**Verbose mode for debugging:**
+
+```bash
+# Enable verbose mode to see debug information
+jfm --file data.json --query "root.users[0].name" --verbose
+
+# Verbose output goes to stderr, JSON output to stdout
+jfm --file data.json --query "root" --verbose > output.json 2> debug.log
+```
+
+**Colored error messages:**
+
+```bash
+# Automatic color detection (default)
+jfm --file data.json --query "invalid.query"
+
+# Force colors
+jfm --color always --file data.json --query "invalid.query"
+
+# Disable colors
+jfm --color never --file data.json --query "invalid.query"
+```
+
+**Displaying version:**
+
+```bash
+jfm --version
+# or
+jfm -V
+```
+
+**Shell Completions:**
+
+Generate shell completion scripts for bash, zsh, fish, or PowerShell:
+
+```bash
+# Generate completions for your shell
+jfm complete bash > ~/.bash_completion.d/jfm
+jfm complete zsh > ~/.zsh/completions/_jfm
+jfm complete fish > ~/.config/fish/completions/jfm.fish
+jfm complete powershell > ~/.config/powershell/jfm.ps1
+
+# Then reload your shell or source the completion file
+# For bash:
+source ~/.bash_completion.d/jfm
+
+# For zsh:
+source ~/.zsh/completions/_jfm
+
+# For fish:
+# Completions are automatically loaded
+
+# For PowerShell:
+# Add the completion script to your PowerShell profile
+```
+
+**Installing Shell Completions:**
+
+**Bash:**
+```bash
+# System-wide installation
+sudo jfm complete bash > /usr/share/bash-completion/completions/jfm
+
+# User installation
+mkdir -p ~/.bash_completion.d
+jfm complete bash > ~/.bash_completion.d/jfm
+echo "source ~/.bash_completion.d/jfm" >> ~/.bashrc
+```
+
+**Zsh:**
+```bash
+# Using Oh My Zsh
+mkdir -p ~/.oh-my-zsh/completions
+jfm complete zsh > ~/.oh-my-zsh/completions/_jfm
+echo "fpath=(~/.oh-my-zsh/completions $fpath)" >> ~/.zshrc
+
+# Manual installation
+mkdir -p ~/.zsh/completions
+jfm complete zsh > ~/.zsh/completions/_jfm
+echo "fpath=(~/.zsh/completions $fpath)" >> ~/.zshrc
+autoload -U compinit && compinit
+```
+
+**Fish:**
+```bash
+mkdir -p ~/.config/fish/completions
+jfm complete fish > ~/.config/fish/completions/jfm.fish
+```
+
+**PowerShell:**
+```powershell
+# Generate and save completions
+jfm complete powershell | Out-File -Encoding utf8 ~/.config/powershell/jfm.ps1
+
+# Add to PowerShell profile
+Add-Content $PROFILE "`n. ~/.config/powershell/jfm.ps1"
 ```
 
 ## Query Language
@@ -1428,8 +1578,11 @@ The tool will exit with an error code if:
 - Query syntax is invalid
 - Runtime errors occur (e.g., division by zero, index out of bounds, undefined variables)
 - No query is entered in interactive mode
+- Empty or invalid input is provided via stdin
 
-Error messages are printed to stderr, while results are printed to stdout (or written to the output file if `--out` is specified).
+Error messages are printed to stderr, while results are printed to stdout (or written to the output file if `--out` is specified). Error messages are colored by default when outputting to a TTY (unless `--color=never` is specified).
+
+Verbose mode (`-v` or `--verbose`) outputs additional debug information to stderr, including JSON parsing steps, query parsing steps, and execution details. This can help diagnose issues with queries or input data.
 
 ## Notes
 
