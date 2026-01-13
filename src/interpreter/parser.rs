@@ -554,8 +554,25 @@ impl TokenParser {
             }
         }
 
-        // Fall back to regular expression parsing
-        self.parse_ternary()
+        // Parse expression, then check for assignment
+        let start_span = self.current_span();
+        let left = self.parse_ternary()?;
+        
+        // Check for assignment (e.g., .id = 1)
+        if matches!(self.current_token(), Some(Token::Assign)) {
+            self.advance();
+            let right = self.parse_pipe_right()?;
+            let span = start_span.merge(right.span);
+            return Ok(Expr {
+                kind: ExprKind::Assignment {
+                    target: Box::new(left),
+                    value: Box::new(right),
+                },
+                span,
+            });
+        }
+        
+        Ok(left)
     }
 
     fn parse_ternary(&mut self) -> Result<Expr, ParseError> {

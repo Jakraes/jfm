@@ -498,6 +498,9 @@ impl Interpreter {
         // This makes `.id + 2` equivalent to `.id += 2` in pipe context
         let mutation_info = self.get_pipe_mutation_info(right);
         
+        // Check if expression is an assignment on a short field access (.field = value)
+        let is_assignment = self.is_pipe_assignment(right);
+        
         match left {
             Value::Array(items_rc) => {
                 let mut results = Vec::new();
@@ -519,6 +522,14 @@ impl Interpreter {
                         }
                         
                         // Return the modified _it
+                        if let Some(modified_item) = self.env.get("_it") {
+                            results.push(modified_item);
+                        } else {
+                            results.push(item.clone());
+                        }
+                    } else if is_assignment {
+                        // Evaluate assignment, then return modified _it
+                        self.eval_expr(right)?;
                         if let Some(modified_item) = self.env.get("_it") {
                             results.push(modified_item);
                         } else {
@@ -555,6 +566,10 @@ impl Interpreter {
                         map_rc.borrow_mut().insert(field.clone(), new_val);
                     }
                     
+                    self.env.get("_it").unwrap_or(other)
+                } else if is_assignment {
+                    // Evaluate assignment, then return modified _it
+                    self.eval_expr(right)?;
                     self.env.get("_it").unwrap_or(other)
                 } else {
                     self.eval_expr(right)?
@@ -620,6 +635,7 @@ impl Interpreter {
     
     /// Check if the expression is a mutation pattern in pipe context
     /// Returns Some((field_name, op, value_expr)) for patterns like `.field + 2`
+    /// For assignments (.field = value), returns None but is handled separately
     fn get_pipe_mutation_info(&self, expr: &Expr) -> Option<(String, BinaryOp, Expr)> {
         // Check for binary ops like `.field + 2`, `.field * 3`, etc.
         if let ExprKind::Binary { left, op, right } = &expr.kind {
@@ -635,6 +651,16 @@ impl Interpreter {
         }
         
         None
+    }
+    
+    /// Check if the expression is an assignment on a short field access (.field = value)
+    fn is_pipe_assignment(&self, expr: &Expr) -> bool {
+        if let ExprKind::Assignment { target, .. } = &expr.kind {
+            if let ExprKind::FieldAccess { object, .. } = &target.kind {
+                return matches!(object.kind, ExprKind::Literal(Value::Null));
+            }
+        }
+        false
     }
 
     fn call_function_value(&mut self, func_val: &Value, call_args: &[Value]) -> Result<Value, InterpreterError> {
