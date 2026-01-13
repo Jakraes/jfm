@@ -1,4 +1,4 @@
-use crate::lexer::{BinaryOp, Expr, ExprKind, Function, Stmt, Token, UnaryOp, Value};
+use crate::lexer::{BinaryOp, Expr, ExprKind, Function, Stmt, UnaryOp, Value};
 use super::environment::Environment;
 use super::error::InterpreterError;
 use super::control_flow::ControlFlow;
@@ -33,7 +33,7 @@ impl Interpreter {
                 ControlFlow::Value(val) => last_val = Some(val),
                 ControlFlow::Next => last_val = None,
                 ControlFlow::Break | ControlFlow::Continue => {
-                    return Err(InterpreterError::InvalidOperation("break/continue outside loop".to_string()));
+                    return Err(InterpreterError::invalid_operation("break/continue outside loop"));
                 }
             }
         }
@@ -93,7 +93,7 @@ impl Interpreter {
                 let iter_val = self.eval_expr(iterable)?;
                 let items_rc = match iter_val {
                     Value::Array(arr) => arr,
-                    _ => return Err(InterpreterError::TypeError("Cannot iterate over non-array".to_string())),
+                    _ => return Err(InterpreterError::type_error("Cannot iterate over non-array")),
                 };
                 
                 let items = items_rc.borrow();
@@ -205,7 +205,7 @@ impl Interpreter {
             ExprKind::Identifier(name) => self
                 .env
                 .get(name.as_ref())
-                .ok_or_else(|| InterpreterError::UndefinedVariable(name.to_string())),
+                .ok_or_else(|| InterpreterError::undefined_variable_at(name.to_string(), expr.span)),
 
             ExprKind::FieldAccess { object, field } => {
                 let obj = self.eval_expr(object)?;
@@ -310,7 +310,7 @@ impl Interpreter {
                         }
                         Ok(Value::Array(Rc::new(RefCell::new(vals))))
                     }
-                    _ => Err(InterpreterError::TypeError("Range requires numbers".to_string())),
+                    _ => Err(InterpreterError::type_error_at("Range requires numbers", expr.span)),
                 }
             }
         }
@@ -331,7 +331,7 @@ impl Interpreter {
                         map_rc.borrow_mut().insert(field.clone(), value.clone());
                         Ok(value)
                     }
-                    _ => Err(InterpreterError::TypeError("Cannot set field on non-object".to_string())),
+                    _ => Err(InterpreterError::type_error("Cannot set field on non-object")),
                 }
             }
             ExprKind::ArrayIndex { array, index } => {
@@ -339,7 +339,7 @@ impl Interpreter {
                 let idx_val = self.eval_expr(index)?;
                 let idx = match idx_val {
                     Value::Number(n, _) => n as usize,
-                    _ => return Err(InterpreterError::TypeError("Index must be a number".to_string())),
+                    _ => return Err(InterpreterError::type_error("Index must be a number")),
                 };
 
                 match arr_val {
@@ -349,13 +349,13 @@ impl Interpreter {
                             items[idx] = value.clone();
                             Ok(value)
                         } else {
-                            Err(InterpreterError::IndexOutOfBounds(idx))
+                            Err(InterpreterError::index_out_of_bounds_at(idx, items.len(), target.span))
                         }
                     }
-                    _ => Err(InterpreterError::TypeError("Cannot index non-array".to_string())),
+                    _ => Err(InterpreterError::type_error("Cannot index non-array")),
                 }
             }
-            _ => Err(InterpreterError::InvalidOperation("Invalid assignment target".to_string())),
+            _ => Err(InterpreterError::invalid_operation("Invalid assignment target")),
         }
     }
     
@@ -398,7 +398,7 @@ impl Interpreter {
         if let Value::Function(func) = func_val {
             self.call_user_function(func, call_args.to_vec())
         } else {
-            Err(InterpreterError::TypeError("Expected function value".to_string()))
+            Err(InterpreterError::type_error("Expected function value"))
         }
     }
 
@@ -473,13 +473,13 @@ impl Interpreter {
             "cos" => builtins::builtin_cos(&args),
             "tan" => builtins::builtin_tan(&args),
             "random" => builtins::builtin_random(&args),
-            _ => Err(InterpreterError::InvalidOperation(format!("Unknown function: {}", name))),
+            _ => Err(InterpreterError::invalid_operation(format!("Unknown function: {}", name))),
         }
     }
 
     fn call_user_function(&mut self, func: &Function, args: Vec<Value>) -> Result<Value, InterpreterError> {
         if func.params.len() != args.len() {
-            return Err(InterpreterError::InvalidOperation(format!(
+            return Err(InterpreterError::invalid_operation(format!(
                 "Function expects {} arguments, got {}",
                 func.params.len(),
                 args.len()
@@ -506,13 +506,13 @@ impl Interpreter {
                     ControlFlow::Value(val) => last_val = val,
                     ControlFlow::Next => {}
                     ControlFlow::Break | ControlFlow::Continue => {
-                        return Err(InterpreterError::InvalidOperation("break/continue outside loop".to_string()));
+                        return Err(InterpreterError::invalid_operation("break/continue outside loop"));
                     }
                 }
             }
             last_val
         } else {
-            return Err(InterpreterError::InvalidOperation("Function has no body".to_string()));
+            return Err(InterpreterError::invalid_operation("Function has no body"));
         };
 
         self.env = (*old_env).clone();
@@ -521,30 +521,27 @@ impl Interpreter {
 
     fn builtin_include(&mut self, args: &[Value]) -> Result<Value, InterpreterError> {
         if args.is_empty() {
-            return Err(InterpreterError::InvalidOperation("include requires a file path argument".to_string()));
+            return Err(InterpreterError::invalid_operation("include requires a file path argument"));
         }
         if let Value::String(path) = &args[0] {
             let script_content = std::fs::read_to_string(path.as_ref())
-                .map_err(|e| InterpreterError::InvalidOperation(format!("Failed to read script file '{}': {}", path, e)))?;
+                .map_err(|e| InterpreterError::invalid_operation(format!("Failed to read script file '{}': {}", path, e)))?;
             
             let lexer = crate::lexer::lexer();
-            let tokens: Vec<Token> = lexer
+            let tokens = lexer
                 .parse(&script_content)
                 .into_result()
-                .map_err(|e| InterpreterError::InvalidOperation(format!("Lexer error in included script: {:?}", e)))?
-                .into_iter()
-                .map(|(tok, _)| tok)
-                .collect();
+                .map_err(|e| InterpreterError::invalid_operation(format!("Lexer error in included script: {:?}", e)))?;
             
-            let mut parser = TokenParser::new(tokens);
+            let mut parser = TokenParser::from_lexer_output(tokens, script_content.len());
             let stmts = parser
                 .parse()
-                .map_err(|e| InterpreterError::InvalidOperation(format!("Parser error in included script: {}", e)))?;
+                .map_err(|e| InterpreterError::invalid_operation(format!("Parser error in included script: {}", e)))?;
             
             let result = self.run(stmts)?;
             Ok(result.unwrap_or(Value::Null))
         } else {
-            Err(InterpreterError::TypeError("include requires a string path argument".to_string()))
+            Err(InterpreterError::type_error("include requires a string path argument"))
         }
     }
 
@@ -566,12 +563,12 @@ impl Interpreter {
                 if let Some(it) = self.env.get("_it") {
                     if let Value::Object(map) = it {
                         return map.borrow().get(field).cloned()
-                            .ok_or_else(|| InterpreterError::FieldNotFound(field.to_string()));
+                            .ok_or_else(|| InterpreterError::field_not_found(field));
                     }
                 }
                 Ok(Value::Null)
             }
-            _ => Err(InterpreterError::TypeError(format!(
+            _ => Err(InterpreterError::type_error(format!(
                 "Cannot access field '{}' on non-object",
                 field
             ))),
@@ -582,14 +579,15 @@ impl Interpreter {
         match (arr, idx) {
             (Value::Array(items), Value::Number(n, _)) => {
                 let index = *n as usize;
+                let len = items.borrow().len();
                 items
                     .borrow()
                     .get(index)
                     .cloned()
-                    .ok_or_else(|| InterpreterError::IndexOutOfBounds(index))
+                    .ok_or_else(|| InterpreterError::index_out_of_bounds(index, len))
             }
-            _ => Err(InterpreterError::TypeError(
-                "Array indexing requires array and number".to_string(),
+            _ => Err(InterpreterError::type_error(
+                "Array indexing requires array and number",
             )),
         }
     }
@@ -606,7 +604,7 @@ impl Interpreter {
             (Value::Number(a, af), BinaryOp::Mul, Value::Number(b, bf)) => Ok(Value::Number(a * b, *af || *bf)),
             (Value::Number(a, _), BinaryOp::Div, Value::Number(b, _)) => {
                 if *b == 0.0 {
-                    Err(InterpreterError::DivisionByZero)
+                    Err(InterpreterError::division_by_zero())
                 } else {
                     Ok(Value::Number(a / b, true))  // Division always produces float
                 }
@@ -637,7 +635,7 @@ impl Interpreter {
             (Value::Number(a, _), BinaryOp::LessEq, Value::Number(b, _)) => Ok(Value::Bool(a <= b)),
             (Value::Bool(a), BinaryOp::And, Value::Bool(b)) => Ok(Value::Bool(*a && *b)),
             (Value::Bool(a), BinaryOp::Or, Value::Bool(b)) => Ok(Value::Bool(*a || *b)),
-            _ => Err(InterpreterError::InvalidOperation(format!(
+            _ => Err(InterpreterError::invalid_operation(format!(
                 "Cannot apply {:?} to {:?} and {:?}",
                 op, left, right
             ))),
@@ -648,7 +646,7 @@ impl Interpreter {
         match (op, val) {
             (UnaryOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
             (UnaryOp::Neg, Value::Number(n, is_float)) => Ok(Value::Number(-n, *is_float)),
-            _ => Err(InterpreterError::InvalidOperation(format!(
+            _ => Err(InterpreterError::invalid_operation(format!(
                 "Cannot apply {:?} to {:?}",
                 op, val
             ))),
@@ -738,22 +736,54 @@ impl Interpreter {
     }
 }
 
+/// Parse and run a query, returning a simple error string for backward compatibility
 pub fn parse_and_run(source: &str, root: Value) -> Result<Option<Value>, String> {
     let tokens = match crate::lexer::lexer().parse(source).into_output() {
-        Some(t) => t
-            .into_iter()
-            .map(|(tok, _)| tok)
-            .collect::<Vec<Token>>(),
+        Some(t) => t,
         None => return Err("Lexer failed".to_string()),
     };
 
-    let mut parser = TokenParser::new(tokens);
+    let mut parser = TokenParser::from_lexer_output(tokens, source.len());
     let stmts = parser.parse()?;
 
     let mut interpreter = Interpreter::with_root(root);
     interpreter
         .run(stmts)
         .map_err(|e| format!("Runtime error: {}", e))
+}
+
+/// Parse and run with detailed error diagnostics
+pub fn parse_and_run_with_diagnostics(
+    source: &str, 
+    root: Value
+) -> Result<Option<Value>, Vec<crate::diagnostic::Diagnostic>> {
+    use crate::diagnostic::Diagnostic;
+
+    let tokens = match crate::lexer::lexer().parse(source).into_output() {
+        Some(t) => t,
+        None => {
+            return Err(vec![Diagnostic::error("Lexer failed to tokenize input")
+                .with_code("E0001")]);
+        }
+    };
+
+    let mut parser = TokenParser::from_lexer_output(tokens, source.len());
+    let parse_result = parser.parse_with_errors();
+
+    if !parse_result.errors.is_empty() {
+        let diagnostics: Vec<Diagnostic> = parse_result
+            .errors
+            .iter()
+            .map(|e| e.to_diagnostic())
+            .collect();
+        return Err(diagnostics);
+    }
+
+    let mut interpreter = Interpreter::with_root(root);
+    match interpreter.run(parse_result.statements) {
+        Ok(val) => Ok(val),
+        Err(e) => Err(vec![e.to_diagnostic()]),
+    }
 }
 
 #[cfg(test)]

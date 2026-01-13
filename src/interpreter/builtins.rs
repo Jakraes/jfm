@@ -8,7 +8,7 @@ use std::hash::{Hash, Hasher};
 macro_rules! require_args {
     ($args:expr, $n:expr, $name:expr) => {
         if $args.len() < $n {
-            return Err(InterpreterError::InvalidOperation(
+            return Err(InterpreterError::invalid_operation(
                 format!("{} requires {} argument(s)", $name, $n)
             ));
         }
@@ -19,7 +19,7 @@ macro_rules! with_array {
     ($args:expr, $name:expr, $body:expr) => {
         match &$args[0] {
             Value::Array(arr) => $body(arr),
-            _ => Err(InterpreterError::TypeError(format!("{} requires array", $name))),
+            _ => Err(InterpreterError::type_error(format!("{} requires array", $name))),
         }
     };
 }
@@ -28,7 +28,7 @@ macro_rules! with_string {
     ($args:expr, $name:expr, $body:expr) => {
         match &$args[0] {
             Value::String(s) => $body(s),
-            _ => Err(InterpreterError::TypeError(format!("{} requires string", $name))),
+            _ => Err(InterpreterError::type_error(format!("{} requires string", $name))),
         }
     };
 }
@@ -37,7 +37,7 @@ macro_rules! with_number {
     ($args:expr, $name:expr, $body:expr) => {
         match &$args[0] {
             Value::Number(n, _) => $body(*n),
-            _ => Err(InterpreterError::TypeError(format!("{} requires number", $name))),
+            _ => Err(InterpreterError::type_error(format!("{} requires number", $name))),
         }
     };
 }
@@ -162,7 +162,7 @@ pub fn builtin_take(args: &[Value]) -> Result<Value, InterpreterError> {
         let result: Vec<Value> = arr.borrow().iter().take(*n as usize).cloned().collect();
         Ok(Value::Array(Rc::new(RefCell::new(result))))
     } else {
-        Err(InterpreterError::TypeError("take requires array and number".to_string()))
+        Err(InterpreterError::type_error("take requires array and number"))
     }
 }
 
@@ -194,7 +194,7 @@ pub fn builtin_input(args: &[Value]) -> Result<Value, InterpreterError> {
     }
     let mut input = String::new();
     io::stdin().read_line(&mut input)
-        .map_err(|e| InterpreterError::InvalidOperation(format!("Failed to read input: {}", e)))?;
+        .map_err(|e| InterpreterError::invalid_operation(format!("Failed to read input: {}", e)))?;
     Ok(Value::String(Rc::from(input.trim_end_matches(['\n', '\r']))))
 }
 
@@ -241,7 +241,7 @@ pub fn builtin_sort_by(
         });
         Ok(args[0].clone())
     } else {
-        Err(InterpreterError::TypeError("sort_by requires array and field name string".to_string()))
+        Err(InterpreterError::type_error("sort_by requires array and field name string"))
     }
 }
 
@@ -266,7 +266,7 @@ pub fn builtin_group_by(
             .collect();
         Ok(Value::Object(Rc::new(RefCell::new(result))))
     } else {
-        Err(InterpreterError::TypeError("group_by requires array and field name string".to_string()))
+        Err(InterpreterError::type_error("group_by requires array and field name string"))
     }
 }
 
@@ -306,12 +306,12 @@ pub fn builtin_slice(args: &[Value]) -> Result<Value, InterpreterError> {
         
         let start = args.get(1).map(|v| match v {
             Value::Number(n, _) => Ok(parse_index(*n)),
-            _ => Err(InterpreterError::TypeError("slice index must be number".to_string())),
+            _ => Err(InterpreterError::type_error("slice index must be number")),
         }).transpose()?.unwrap_or(0);
         
         let end = args.get(2).map(|v| match v {
             Value::Number(n, _) => Ok(parse_index(*n)),
-            _ => Err(InterpreterError::TypeError("slice index must be number".to_string())),
+            _ => Err(InterpreterError::type_error("slice index must be number")),
         }).transpose()?.unwrap_or(len);
         
         let result: Vec<Value> = arr_ref.iter().skip(start).take(end.saturating_sub(start)).cloned().collect();
@@ -347,7 +347,7 @@ pub fn builtin_flat(args: &[Value]) -> Result<Value, InterpreterError> {
     with_array!(args, "flat", |arr: &Rc<RefCell<Vec<Value>>>| {
         let depth = args.get(1).map(|v| match v {
             Value::Number(n, _) => Ok(*n as usize),
-            _ => Err(InterpreterError::TypeError("flat depth must be number".to_string())),
+            _ => Err(InterpreterError::type_error("flat depth must be number")),
         }).transpose()?.unwrap_or(1);
         Ok(Value::Array(Rc::new(RefCell::new(flatten_recursive(&arr.borrow(), depth, 0)))))
     })
@@ -368,7 +368,7 @@ pub fn builtin_find(
         }
         Ok(Value::Null)
     } else {
-        Err(InterpreterError::TypeError("find requires array and function".to_string()))
+        Err(InterpreterError::type_error("find requires array and function"))
     }
 }
 
@@ -385,7 +385,7 @@ pub fn builtin_find_index(
         }
         Ok(Value::Number(-1.0, false))
     } else {
-        Err(InterpreterError::TypeError("find_index requires array and function".to_string()))
+        Err(InterpreterError::type_error("find_index requires array and function"))
     }
 }
 
@@ -399,7 +399,7 @@ pub fn builtin_reduce(
         for item in arr.borrow().iter() { acc = call_fn(&args[1], &[acc, item.clone()])?; }
         Ok(acc)
     } else {
-        Err(InterpreterError::TypeError("reduce requires array, function, and initial value".to_string()))
+        Err(InterpreterError::type_error("reduce requires array, function, and initial value"))
     }
 }
 
@@ -414,7 +414,7 @@ pub fn builtin_every(
         }
         Ok(Value::Bool(true))
     } else {
-        Err(InterpreterError::TypeError("every requires array and function".to_string()))
+        Err(InterpreterError::type_error("every requires array and function"))
     }
 }
 
@@ -429,7 +429,7 @@ pub fn builtin_some(
         }
         Ok(Value::Bool(false))
     } else {
-        Err(InterpreterError::TypeError("some requires array and function".to_string()))
+        Err(InterpreterError::type_error("some requires array and function"))
     }
 }
 
@@ -442,7 +442,7 @@ pub fn builtin_zip(args: &[Value]) -> Result<Value, InterpreterError> {
             .collect();
         Ok(Value::Array(Rc::new(RefCell::new(result))))
     } else {
-        Err(InterpreterError::TypeError("zip requires two arrays".to_string()))
+        Err(InterpreterError::type_error("zip requires two arrays"))
     }
 }
 
@@ -466,7 +466,7 @@ pub fn builtin_split(args: &[Value]) -> Result<Value, InterpreterError> {
         let parts: Vec<Value> = s.split(delim.as_ref()).map(|p| Value::String(Rc::from(p))).collect();
         Ok(Value::Array(Rc::new(RefCell::new(parts))))
     } else {
-        Err(InterpreterError::TypeError("split requires string and delimiter".to_string()))
+        Err(InterpreterError::type_error("split requires string and delimiter"))
     }
 }
 
@@ -479,7 +479,7 @@ pub fn builtin_join(
         let parts: Vec<String> = arr.borrow().iter().map(|v| value_to_string(v)).collect();
         Ok(Value::String(Rc::from(parts.join(delim.as_ref()))))
     } else {
-        Err(InterpreterError::TypeError("join requires array and delimiter".to_string()))
+        Err(InterpreterError::type_error("join requires array and delimiter"))
     }
 }
 
@@ -503,7 +503,7 @@ pub fn builtin_contains(args: &[Value]) -> Result<Value, InterpreterError> {
     if let (Value::String(s), Value::String(sub)) = (&args[0], &args[1]) {
         Ok(Value::Bool(s.contains(sub.as_ref())))
     } else {
-        Err(InterpreterError::TypeError("contains requires two strings".to_string()))
+        Err(InterpreterError::type_error("contains requires two strings"))
     }
 }
 
@@ -512,7 +512,7 @@ pub fn builtin_starts_with(args: &[Value]) -> Result<Value, InterpreterError> {
     if let (Value::String(s), Value::String(prefix)) = (&args[0], &args[1]) {
         Ok(Value::Bool(s.starts_with(prefix.as_ref())))
     } else {
-        Err(InterpreterError::TypeError("starts_with requires two strings".to_string()))
+        Err(InterpreterError::type_error("starts_with requires two strings"))
     }
 }
 
@@ -521,7 +521,7 @@ pub fn builtin_ends_with(args: &[Value]) -> Result<Value, InterpreterError> {
     if let (Value::String(s), Value::String(suffix)) = (&args[0], &args[1]) {
         Ok(Value::Bool(s.ends_with(suffix.as_ref())))
     } else {
-        Err(InterpreterError::TypeError("ends_with requires two strings".to_string()))
+        Err(InterpreterError::type_error("ends_with requires two strings"))
     }
 }
 
@@ -530,7 +530,7 @@ pub fn builtin_replace(args: &[Value]) -> Result<Value, InterpreterError> {
     if let (Value::String(s), Value::String(from), Value::String(to)) = (&args[0], &args[1], &args[2]) {
         Ok(Value::String(Rc::from(s.replace(from.as_ref(), to.as_ref()))))
     } else {
-        Err(InterpreterError::TypeError("replace requires three strings".to_string()))
+        Err(InterpreterError::type_error("replace requires three strings"))
     }
 }
 
@@ -545,7 +545,7 @@ pub fn builtin_keys(args: &[Value]) -> Result<Value, InterpreterError> {
         let keys: Vec<Value> = obj.borrow().keys().map(|k| Value::String(Rc::from(k.clone()))).collect();
         Ok(Value::Array(Rc::new(RefCell::new(keys))))
     } else {
-        Err(InterpreterError::TypeError("keys requires object".to_string()))
+        Err(InterpreterError::type_error("keys requires object"))
     }
 }
 
@@ -555,7 +555,7 @@ pub fn builtin_values(args: &[Value]) -> Result<Value, InterpreterError> {
         let values: Vec<Value> = obj.borrow().values().cloned().collect();
         Ok(Value::Array(Rc::new(RefCell::new(values))))
     } else {
-        Err(InterpreterError::TypeError("values requires object".to_string()))
+        Err(InterpreterError::type_error("values requires object"))
     }
 }
 
@@ -567,7 +567,7 @@ pub fn builtin_entries(args: &[Value]) -> Result<Value, InterpreterError> {
             .collect();
         Ok(Value::Array(Rc::new(RefCell::new(entries))))
     } else {
-        Err(InterpreterError::TypeError("entries requires object".to_string()))
+        Err(InterpreterError::type_error("entries requires object"))
     }
 }
 
@@ -576,7 +576,7 @@ pub fn builtin_has(args: &[Value]) -> Result<Value, InterpreterError> {
     if let (Value::Object(obj), Value::String(key)) = (&args[0], &args[1]) {
         Ok(Value::Bool(obj.borrow().contains_key(key.as_ref())))
     } else {
-        Err(InterpreterError::TypeError("has requires object and key".to_string()))
+        Err(InterpreterError::type_error("has requires object and key"))
     }
 }
 
@@ -588,7 +588,7 @@ pub fn builtin_merge(args: &[Value]) -> Result<Value, InterpreterError> {
         for (k, v) in o2.borrow().iter() { result.insert(k.clone(), v.clone()); }
         Ok(Value::Object(Rc::new(RefCell::new(result))))
     } else {
-        Err(InterpreterError::TypeError("merge requires two objects".to_string()))
+        Err(InterpreterError::type_error("merge requires two objects"))
     }
 }
 
@@ -621,8 +621,8 @@ pub fn builtin_to_number(args: &[Value]) -> Result<Value, InterpreterError> {
     match &args[0] {
         Value::Number(n, is_float) => Ok(Value::Number(*n, *is_float)),
         Value::String(s) => s.parse::<f64>().map(|n| Value::Number(n, s.contains('.')))
-            .map_err(|_| InterpreterError::InvalidOperation("to_number: invalid string".to_string())),
-        _ => Err(InterpreterError::TypeError("to_number requires number or string".to_string())),
+            .map_err(|_| InterpreterError::invalid_operation("to_number: invalid string")),
+        _ => Err(InterpreterError::type_error("to_number requires number or string")),
     }
 }
 
@@ -641,7 +641,7 @@ pub fn builtin_parse_json(args: &[Value]) -> Result<Value, InterpreterError> {
             }
         }
         json::parse_json(s.as_ref()).map(|v| convert(&v))
-            .map_err(|e| InterpreterError::InvalidOperation(format!("parse_json: {}", e)))
+            .map_err(|e| InterpreterError::invalid_operation(format!("parse_json: {}", e)))
     })
 }
 
@@ -656,7 +656,7 @@ unary_math!(builtin_tan, tan);
 pub fn builtin_sqrt(args: &[Value]) -> Result<Value, InterpreterError> {
     require_args!(args, 1, "sqrt");
     with_number!(args, "sqrt", |n: f64| {
-        if n < 0.0 { Err(InterpreterError::InvalidOperation("sqrt: negative number".to_string())) }
+        if n < 0.0 { Err(InterpreterError::invalid_operation("sqrt: negative number")) }
         else { Ok(Value::Number(n.sqrt(), true)) }
     })
 }
@@ -666,7 +666,7 @@ pub fn builtin_pow(args: &[Value]) -> Result<Value, InterpreterError> {
     if let (Value::Number(base, _), Value::Number(exp, _)) = (&args[0], &args[1]) {
         Ok(Value::Number(base.powf(*exp), true))
     } else {
-        Err(InterpreterError::TypeError("pow requires two numbers".to_string()))
+        Err(InterpreterError::type_error("pow requires two numbers"))
     }
 }
 

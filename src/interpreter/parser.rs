@@ -1,51 +1,231 @@
+use crate::diagnostic::{Diagnostic, Label, Span};
 use crate::lexer::{BinaryOp, Expr, ExprKind, Stmt, Token, UnaryOp, Value};
-use chumsky::span::{SimpleSpan, Span};
 use std::rc::Rc;
 
+/// A token with its source span
+#[derive(Debug, Clone)]
+pub struct SpannedToken {
+    pub token: Token,
+    pub span: Span,
+}
+
+/// Parse error with location information
+#[derive(Debug, Clone)]
+pub struct ParseError {
+    pub message: String,
+    pub span: Span,
+    pub expected: Vec<String>,
+    pub found: Option<String>,
+}
+
+impl ParseError {
+    pub fn new(message: impl Into<String>, span: Span) -> Self {
+        Self {
+            message: message.into(),
+            span,
+            expected: Vec::new(),
+            found: None,
+        }
+    }
+
+    pub fn with_expected(mut self, expected: Vec<String>) -> Self {
+        self.expected = expected;
+        self
+    }
+
+    pub fn with_found(mut self, found: impl Into<String>) -> Self {
+        self.found = Some(found.into());
+        self
+    }
+
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        let mut msg = self.message.clone();
+        if !self.expected.is_empty() {
+            msg = format!("expected {}", self.expected.join(" or "));
+            if let Some(found) = &self.found {
+                msg.push_str(&format!(", found {}", found));
+            }
+        }
+
+        let mut diag = Diagnostic::error(msg)
+            .with_code("E0101")
+            .with_label(Label::primary(self.span, ""));
+
+        if !self.expected.is_empty() && self.expected.len() == 1 {
+            diag = diag.with_help(format!("expected {} here", self.expected[0]));
+        }
+
+        diag
+    }
+}
+
+/// Result of parsing with potential errors
+pub struct ParseResult {
+    pub statements: Vec<Stmt>,
+    pub errors: Vec<ParseError>,
+}
+
+impl ParseResult {
+    pub fn is_ok(&self) -> bool {
+        self.errors.is_empty()
+    }
+}
+
 pub struct TokenParser {
-    tokens: Vec<Token>,
+    tokens: Vec<SpannedToken>,
     current: usize,
+    errors: Vec<ParseError>,
+    source_len: usize,
 }
 
 impl TokenParser {
-    pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, current: 0 }
+    pub fn new(tokens: Vec<SpannedToken>, source_len: usize) -> Self {
+        Self {
+            tokens,
+            current: 0,
+            errors: Vec::new(),
+            source_len,
+        }
+    }
+
+    /// Create a TokenParser from the lexer output
+    pub fn from_lexer_output(tokens: Vec<(Token, chumsky::span::SimpleSpan)>, source_len: usize) -> Self {
+        let spanned_tokens: Vec<SpannedToken> = tokens
+            .into_iter()
+            .map(|(token, span)| SpannedToken {
+                token,
+                span: Span::new(span.start, span.end),
+            })
+            .collect();
+        Self::new(spanned_tokens, source_len)
     }
 
     fn current_token(&self) -> Option<&Token> {
-        self.tokens.get(self.current)
+        self.tokens.get(self.current).map(|st| &st.token)
     }
 
-    fn advance(&mut self) -> Option<Token> {
+    fn current_span(&self) -> Span {
+        self.tokens
+            .get(self.current)
+            .map(|st| st.span)
+            .unwrap_or_else(|| Span::new(self.source_len, self.source_len))
+    }
+
+    fn previous_span(&self) -> Span {
+        if self.current > 0 {
+            self.tokens[self.current - 1].span
+        } else {
+            Span::new(0, 0)
+        }
+    }
+
+    fn advance(&mut self) -> Option<SpannedToken> {
         if self.current < self.tokens.len() {
-            let token = self.tokens[self.current].clone();
+            let st = self.tokens[self.current].clone();
             self.current += 1;
-            Some(token)
+            Some(st)
         } else {
             None
         }
     }
 
-    fn expect(&mut self, expected: Token) -> Result<(), String> {
+    fn expect(&mut self, expected: Token) -> Result<Span, ParseError> {
         match self.current_token() {
             Some(token) if std::mem::discriminant(token) == std::mem::discriminant(&expected) => {
+                let span = self.current_span();
                 self.advance();
-                Ok(())
+                Ok(span)
             }
-            Some(token) => Err(format!("Expected {:?}, found {:?}", expected, token)),
-            None => Err(format!("Expected {:?}, found end of input", expected)),
+            Some(token) => {
+                let err = ParseError::new("unexpected token", self.current_span())
+                    .with_expected(vec![format!("{:?}", expected)])
+                    .with_found(format!("{:?}", token));
+                Err(err)
+            }
+            None => {
+                let err = ParseError::new("unexpected end of input", self.current_span())
+                    .with_expected(vec![format!("{:?}", expected)]);
+                Err(err)
+            }
+        }
+    }
+
+    fn add_error(&mut self, error: ParseError) {
+        self.errors.push(error);
+    }
+
+    /// Synchronize parser state after an error (skip to recovery point)
+    fn synchronize(&mut self) {
+        while let Some(token) = self.current_token() {
+            match token {
+                Token::Semicolon => {
+                    self.advance();
+                    return;
+                }
+                Token::Let | Token::For | Token::While | Token::If | Token::Return | Token::Fn => {
+                    return;
+                }
+                Token::RBrace => {
+                    return;
+                }
+                _ => {
+                    self.advance();
+                }
+            }
         }
     }
 
     pub fn parse(&mut self) -> Result<Vec<Stmt>, String> {
         let mut statements = Vec::new();
         while self.current_token().is_some() {
-            statements.push(self.parse_statement()?);
+            match self.parse_statement() {
+                Ok(stmt) => statements.push(stmt),
+                Err(err) => {
+                    self.add_error(err.clone());
+                    self.synchronize();
+                    // Limit errors to prevent cascade
+                    if self.errors.len() >= 10 {
+                        break;
+                    }
+                }
+            }
         }
-        Ok(statements)
+
+        if self.errors.is_empty() {
+            Ok(statements)
+        } else {
+            // Return first error for backward compatibility
+            Err(self.errors[0].message.clone())
+        }
     }
 
-    fn parse_statement(&mut self) -> Result<Stmt, String> {
+    /// Parse and return full result with all errors
+    pub fn parse_with_errors(&mut self) -> ParseResult {
+        let mut statements = Vec::new();
+        while self.current_token().is_some() {
+            match self.parse_statement() {
+                Ok(stmt) => statements.push(stmt),
+                Err(err) => {
+                    self.add_error(err);
+                    self.synchronize();
+                    if self.errors.len() >= 10 {
+                        break;
+                    }
+                }
+            }
+        }
+        ParseResult {
+            statements,
+            errors: std::mem::take(&mut self.errors),
+        }
+    }
+
+    /// Get collected errors
+    pub fn get_errors(&self) -> &[ParseError] {
+        &self.errors
+    }
+
+    fn parse_statement(&mut self) -> Result<Stmt, ParseError> {
         match self.current_token() {
             Some(Token::Let) => self.parse_let_statement(),
             Some(Token::For) => self.parse_for_statement(),
@@ -75,21 +255,27 @@ impl TokenParser {
         }
     }
 
-    fn parse_block(&mut self) -> Result<Vec<Stmt>, String> {
+    fn parse_block(&mut self) -> Result<Vec<Stmt>, ParseError> {
         self.expect(Token::LBrace)?;
         let mut statements = Vec::new();
-        while !matches!(self.current_token(), Some(Token::RBrace)) && self.current_token().is_some() {
+        while !matches!(self.current_token(), Some(Token::RBrace)) && self.current_token().is_some()
+        {
             statements.push(self.parse_statement()?);
         }
         self.expect(Token::RBrace)?;
         Ok(statements)
     }
 
-    fn parse_for_statement(&mut self) -> Result<Stmt, String> {
+    fn parse_for_statement(&mut self) -> Result<Stmt, ParseError> {
         self.expect(Token::For)?;
         let var = match self.advance() {
-            Some(Token::Ident(n)) => Rc::from(n.as_str()),
-            other => return Err(format!("Expected identifier in for loop, found {:?}", other)),
+            Some(SpannedToken { token: Token::Ident(n), .. }) => Rc::from(n.as_str()),
+            other => {
+                let span = other.as_ref().map(|st| st.span).unwrap_or(self.current_span());
+                return Err(ParseError::new("expected identifier in for loop", span)
+                    .with_expected(vec!["identifier".to_string()])
+                    .with_found(format!("{:?}", other.map(|st| st.token))));
+            }
         };
         self.expect(Token::In)?;
         let iterable = self.parse_expression()?;
@@ -97,26 +283,33 @@ impl TokenParser {
         Ok(Stmt::For { var, iterable, body })
     }
 
-    fn parse_while_statement(&mut self) -> Result<Stmt, String> {
+    fn parse_while_statement(&mut self) -> Result<Stmt, ParseError> {
         self.expect(Token::While)?;
         let condition = self.parse_expression()?;
         let body = self.parse_block()?;
         Ok(Stmt::While { condition, body })
     }
 
-    fn parse_function_statement(&mut self) -> Result<Stmt, String> {
+    fn parse_function_statement(&mut self) -> Result<Stmt, ParseError> {
         self.expect(Token::Fn)?;
         let name = match self.advance() {
-            Some(Token::Ident(n)) => Rc::from(n.as_str()),
-            other => return Err(format!("Expected function name, found {:?}", other)),
+            Some(SpannedToken { token: Token::Ident(n), .. }) => Rc::from(n.as_str()),
+            other => {
+                let span = other.map(|st| st.span).unwrap_or(self.current_span());
+                return Err(ParseError::new("expected function name", span)
+                    .with_expected(vec!["identifier".to_string()]));
+            }
         };
         self.expect(Token::LParen)?;
         let mut params = Vec::new();
         if !matches!(self.current_token(), Some(Token::RParen)) {
             loop {
                 let param = match self.advance() {
-                    Some(Token::Ident(n)) => Rc::from(n.as_str()),
-                    other => return Err(format!("Expected parameter name, found {:?}", other)),
+                    Some(SpannedToken { token: Token::Ident(n), .. }) => Rc::from(n.as_str()),
+                    other => {
+                        let span = other.map(|st| st.span).unwrap_or(self.current_span());
+                        return Err(ParseError::new("expected parameter name", span));
+                    }
                 };
                 params.push(param);
                 if matches!(self.current_token(), Some(Token::Comma)) {
@@ -131,7 +324,7 @@ impl TokenParser {
         Ok(Stmt::Function { name, params, body })
     }
 
-    fn parse_if_statement(&mut self) -> Result<Stmt, String> {
+    fn parse_if_statement(&mut self) -> Result<Stmt, ParseError> {
         self.expect(Token::If)?;
         let condition = self.parse_expression()?;
         let then_branch = self.parse_block()?;
@@ -152,7 +345,7 @@ impl TokenParser {
         })
     }
 
-    fn parse_return_statement(&mut self) -> Result<Stmt, String> {
+    fn parse_return_statement(&mut self) -> Result<Stmt, ParseError> {
         self.expect(Token::Return)?;
         let value = if !matches!(self.current_token(), Some(Token::Semicolon)) {
             Some(self.parse_expression()?)
@@ -163,12 +356,16 @@ impl TokenParser {
         Ok(Stmt::Return(value))
     }
 
-    fn parse_let_statement(&mut self) -> Result<Stmt, String> {
+    fn parse_let_statement(&mut self) -> Result<Stmt, ParseError> {
         self.expect(Token::Let)?;
 
         let name = match self.advance() {
-            Some(Token::Ident(n)) => n,
-            other => return Err(format!("Expected identifier, found {:?}", other)),
+            Some(SpannedToken { token: Token::Ident(n), .. }) => n,
+            other => {
+                let span = other.map(|st| st.span).unwrap_or(self.current_span());
+                return Err(ParseError::new("expected identifier after 'let'", span)
+                    .with_expected(vec!["identifier".to_string()]));
+            }
         };
 
         self.expect(Token::Assign)?;
@@ -181,11 +378,12 @@ impl TokenParser {
         })
     }
 
-    fn parse_expression(&mut self) -> Result<Expr, String> {
+    fn parse_expression(&mut self) -> Result<Expr, ParseError> {
         self.parse_assignment()
     }
 
-    fn parse_assignment(&mut self) -> Result<Expr, String> {
+    fn parse_assignment(&mut self) -> Result<Expr, ParseError> {
+        let start_span = self.current_span();
         let left = self.parse_lambda()?;
 
         if let Some(token) = self.current_token().cloned() {
@@ -202,7 +400,7 @@ impl TokenParser {
             if let Some(op_kind) = op {
                 self.advance();
                 let right = self.parse_assignment()?;
-                let span = SimpleSpan::new((), 0..0);
+                let span = start_span.merge(right.span);
                 return match op_kind {
                     None => Ok(Expr {
                         kind: ExprKind::Assignment {
@@ -226,16 +424,17 @@ impl TokenParser {
         Ok(left)
     }
 
-    fn parse_lambda(&mut self) -> Result<Expr, String> {
+    fn parse_lambda(&mut self) -> Result<Expr, ParseError> {
         let saved_current = self.current;
-        
+        let start_span = self.current_span();
+
         let params = if matches!(self.current_token(), Some(Token::LParen)) {
             self.advance();
             let mut parsed_params = Vec::new();
             if !matches!(self.current_token(), Some(Token::RParen)) {
                 loop {
                     let param = match self.advance() {
-                        Some(Token::Ident(n)) => Rc::from(n.as_str()),
+                        Some(SpannedToken { token: Token::Ident(n), .. }) => Rc::from(n.as_str()),
                         _ => {
                             self.current = saved_current;
                             return self.parse_pipe();
@@ -254,7 +453,7 @@ impl TokenParser {
                 return self.parse_pipe();
             }
             self.advance();
-            
+
             if matches!(self.current_token(), Some(Token::Arrow)) {
                 parsed_params
             } else {
@@ -263,13 +462,13 @@ impl TokenParser {
             }
         } else if let Some(Token::Ident(_)) = self.current_token() {
             let param_name = match self.advance() {
-                Some(Token::Ident(n)) => Rc::from(n.as_str()),
+                Some(SpannedToken { token: Token::Ident(n), .. }) => Rc::from(n.as_str()),
                 _ => {
                     self.current = saved_current;
                     return self.parse_pipe();
                 }
             };
-            
+
             if matches!(self.current_token(), Some(Token::Arrow)) {
                 vec![param_name]
             } else {
@@ -279,11 +478,11 @@ impl TokenParser {
         } else {
             return self.parse_pipe();
         };
-        
-        self.advance();
+
+        self.advance(); // consume =>
         let body = self.parse_expression()?;
-        let span = SimpleSpan::new((), 0..0);
-        
+        let span = start_span.merge(body.span);
+
         Ok(Expr {
             kind: ExprKind::Lambda {
                 params,
@@ -293,13 +492,13 @@ impl TokenParser {
         })
     }
 
-    fn parse_pipe(&mut self) -> Result<Expr, String> {
+    fn parse_pipe(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_logical_or()?;
 
         while matches!(self.current_token(), Some(Token::Pipe)) {
             self.advance();
             let right = self.parse_logical_or()?;
-            let span = SimpleSpan::new((), 0..0);
+            let span = left.span.merge(right.span);
             left = Expr {
                 kind: ExprKind::Pipe {
                     left: Box::new(left),
@@ -312,13 +511,13 @@ impl TokenParser {
         Ok(left)
     }
 
-    fn parse_logical_or(&mut self) -> Result<Expr, String> {
+    fn parse_logical_or(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_logical_and()?;
 
         while matches!(self.current_token(), Some(Token::Or)) {
             self.advance();
             let right = self.parse_logical_and()?;
-            let span = SimpleSpan::new((), 0..0);
+            let span = left.span.merge(right.span);
             left = Expr {
                 kind: ExprKind::Binary {
                     left: Box::new(left),
@@ -332,13 +531,13 @@ impl TokenParser {
         Ok(left)
     }
 
-    fn parse_logical_and(&mut self) -> Result<Expr, String> {
+    fn parse_logical_and(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_comparison()?;
 
         while matches!(self.current_token(), Some(Token::And)) {
             self.advance();
             let right = self.parse_comparison()?;
-            let span = SimpleSpan::new((), 0..0);
+            let span = left.span.merge(right.span);
             left = Expr {
                 kind: ExprKind::Binary {
                     left: Box::new(left),
@@ -352,7 +551,7 @@ impl TokenParser {
         Ok(left)
     }
 
-    fn parse_comparison(&mut self) -> Result<Expr, String> {
+    fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_range()?;
 
         while let Some(op) = self.current_token() {
@@ -367,7 +566,7 @@ impl TokenParser {
             };
             self.advance();
             let right = self.parse_range()?;
-            let span = SimpleSpan::new((), 0..0);
+            let span = left.span.merge(right.span);
             left = Expr {
                 kind: ExprKind::Binary {
                     left: Box::new(left),
@@ -381,13 +580,13 @@ impl TokenParser {
         Ok(left)
     }
 
-    fn parse_range(&mut self) -> Result<Expr, String> {
+    fn parse_range(&mut self) -> Result<Expr, ParseError> {
         let left = self.parse_additive()?;
 
         if matches!(self.current_token(), Some(Token::DotDot)) {
             self.advance();
             let right = self.parse_additive()?;
-            let span = SimpleSpan::new((), 0..0);
+            let span = left.span.merge(right.span);
             return Ok(Expr {
                 kind: ExprKind::Range {
                     start: Box::new(left),
@@ -400,7 +599,7 @@ impl TokenParser {
         Ok(left)
     }
 
-    fn parse_additive(&mut self) -> Result<Expr, String> {
+    fn parse_additive(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_multiplicative()?;
 
         while let Some(op) = self.current_token() {
@@ -411,7 +610,7 @@ impl TokenParser {
             };
             self.advance();
             let right = self.parse_multiplicative()?;
-            let span = SimpleSpan::new((), 0..0);
+            let span = left.span.merge(right.span);
             left = Expr {
                 kind: ExprKind::Binary {
                     left: Box::new(left),
@@ -425,7 +624,7 @@ impl TokenParser {
         Ok(left)
     }
 
-    fn parse_multiplicative(&mut self) -> Result<Expr, String> {
+    fn parse_multiplicative(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_power()?;
 
         while let Some(op) = self.current_token() {
@@ -437,7 +636,7 @@ impl TokenParser {
             };
             self.advance();
             let right = self.parse_power()?;
-            let span = SimpleSpan::new((), 0..0);
+            let span = left.span.merge(right.span);
             left = Expr {
                 kind: ExprKind::Binary {
                     left: Box::new(left),
@@ -451,13 +650,13 @@ impl TokenParser {
         Ok(left)
     }
 
-    fn parse_power(&mut self) -> Result<Expr, String> {
+    fn parse_power(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_unary()?;
 
         while matches!(self.current_token(), Some(Token::Caret)) {
             self.advance();
             let right = self.parse_unary()?;
-            let span = SimpleSpan::new((), 0..0);
+            let span = left.span.merge(right.span);
             left = Expr {
                 kind: ExprKind::Binary {
                     left: Box::new(left),
@@ -471,12 +670,13 @@ impl TokenParser {
         Ok(left)
     }
 
-    fn parse_unary(&mut self) -> Result<Expr, String> {
+    fn parse_unary(&mut self) -> Result<Expr, ParseError> {
+        let start_span = self.current_span();
         match self.current_token() {
             Some(Token::Bang) => {
                 self.advance();
                 let expr = self.parse_unary()?;
-                let span = SimpleSpan::new((), 0..0);
+                let span = start_span.merge(expr.span);
                 Ok(Expr {
                     kind: ExprKind::Unary {
                         op: UnaryOp::Not,
@@ -488,7 +688,7 @@ impl TokenParser {
             Some(Token::Minus) => {
                 self.advance();
                 let expr = self.parse_unary()?;
-                let span = SimpleSpan::new((), 0..0);
+                let span = start_span.merge(expr.span);
                 Ok(Expr {
                     kind: ExprKind::Unary {
                         op: UnaryOp::Neg,
@@ -501,18 +701,25 @@ impl TokenParser {
         }
     }
 
-    fn parse_postfix(&mut self) -> Result<Expr, String> {
+    fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.parse_primary()?;
 
         loop {
             match self.current_token() {
-            Some(Token::Dot) => {
+                Some(Token::Dot) => {
                     self.advance();
+                    let field_span = self.current_span();
                     let field = match self.advance() {
-                        Some(Token::Ident(f)) => f,
-                        other => return Err(format!("Expected field name, found {:?}", other)),
+                        Some(SpannedToken { token: Token::Ident(f), .. }) => f,
+                        other => {
+                            return Err(ParseError::new(
+                                "expected field name after '.'",
+                                other.map(|st| st.span).unwrap_or(field_span),
+                            )
+                            .with_expected(vec!["identifier".to_string()]));
+                        }
                     };
-                    let span = SimpleSpan::new((), 0..0);
+                    let span = expr.span.merge(self.previous_span());
                     expr = Expr {
                         kind: ExprKind::FieldAccess {
                             object: Box::new(expr),
@@ -523,11 +730,17 @@ impl TokenParser {
                 }
                 Some(Token::QuestionDot) => {
                     self.advance();
+                    let field_span = self.current_span();
                     let field = match self.advance() {
-                        Some(Token::Ident(f)) => f,
-                        other => return Err(format!("Expected field name, found {:?}", other)),
+                        Some(SpannedToken { token: Token::Ident(f), .. }) => f,
+                        other => {
+                            return Err(ParseError::new(
+                                "expected field name after '?.'",
+                                other.map(|st| st.span).unwrap_or(field_span),
+                            ));
+                        }
                     };
-                    let span = SimpleSpan::new((), 0..0);
+                    let span = expr.span.merge(self.previous_span());
                     expr = Expr {
                         kind: ExprKind::OptionalFieldAccess {
                             object: Box::new(expr),
@@ -539,8 +752,8 @@ impl TokenParser {
                 Some(Token::LBracket) => {
                     self.advance();
                     let index = self.parse_expression()?;
-                    self.expect(Token::RBracket)?;
-                    let span = SimpleSpan::new((), 0..0);
+                    let end_span = self.expect(Token::RBracket)?;
+                    let span = expr.span.merge(end_span);
                     expr = Expr {
                         kind: ExprKind::ArrayIndex {
                             array: Box::new(expr),
@@ -562,16 +775,19 @@ impl TokenParser {
                             }
                         }
                     }
-                    self.expect(Token::RParen)?;
-                    let span = SimpleSpan::new((), 0..0);
-                    
+                    let end_span = self.expect(Token::RParen)?;
+                    let span = expr.span.merge(end_span);
+
                     if let ExprKind::Identifier(name) = expr.kind {
                         expr = Expr {
                             kind: ExprKind::Call { name, args },
                             span,
                         };
                     } else {
-                        return Err("Only identifiers can be called as functions".to_string());
+                        return Err(ParseError::new(
+                            "only identifiers can be called as functions",
+                            expr.span,
+                        ));
                     }
                 }
                 _ => break,
@@ -581,51 +797,62 @@ impl TokenParser {
         Ok(expr)
     }
 
-    fn parse_primary(&mut self) -> Result<Expr, String> {
-        let span = SimpleSpan::new((), 0..0);
+    fn parse_primary(&mut self) -> Result<Expr, ParseError> {
+        let st = self.advance();
+        let (token, span) = match st {
+            Some(SpannedToken { token, span }) => (token, span),
+            None => {
+                return Err(ParseError::new(
+                    "unexpected end of input",
+                    Span::new(self.source_len, self.source_len),
+                )
+                .with_expected(vec!["expression".to_string()]));
+            }
+        };
 
-        match self.advance() {
-            Some(Token::Number(n, is_float)) => Ok(Expr {
+        match token {
+            Token::Number(n, is_float) => Ok(Expr {
                 kind: ExprKind::Literal(Value::Number(n, is_float)),
                 span,
             }),
-            Some(Token::String(s)) => Ok(Expr {
+            Token::String(s) => Ok(Expr {
                 kind: ExprKind::Literal(Value::String(Rc::from(s.as_str()))),
                 span,
             }),
-            Some(Token::True) => Ok(Expr {
+            Token::True => Ok(Expr {
                 kind: ExprKind::Literal(Value::Bool(true)),
                 span,
             }),
-            Some(Token::False) => Ok(Expr {
+            Token::False => Ok(Expr {
                 kind: ExprKind::Literal(Value::Bool(false)),
                 span,
             }),
-            Some(Token::Null) => Ok(Expr {
+            Token::Null => Ok(Expr {
                 kind: ExprKind::Literal(Value::Null),
                 span,
             }),
-            Some(Token::Ident(name)) => Ok(Expr {
+            Token::Ident(name) => Ok(Expr {
                 kind: ExprKind::Identifier(Rc::from(name.as_str())),
                 span,
             }),
-            Some(Token::Filter) => Ok(Expr {
+            Token::Filter => Ok(Expr {
                 kind: ExprKind::Identifier(Rc::from("filter")),
                 span,
             }),
-            Some(Token::Map) => Ok(Expr {
+            Token::Map => Ok(Expr {
                 kind: ExprKind::Identifier(Rc::from("map")),
                 span,
             }),
-            Some(Token::LParen) => {
+            Token::LParen => {
                 let expr = self.parse_expression()?;
-                self.expect(Token::RParen)?;
+                let end_span = self.expect(Token::RParen)?;
                 Ok(Expr {
                     kind: ExprKind::Grouped(Box::new(expr)),
-                    span,
+                    span: span.merge(end_span),
                 })
             }
-            Some(Token::LBracket) => {
+            Token::LBracket => {
+                let start_span = span;
                 let mut elements = Vec::new();
                 if !matches!(self.current_token(), Some(Token::RBracket)) {
                     loop {
@@ -637,20 +864,28 @@ impl TokenParser {
                         }
                     }
                 }
-                self.expect(Token::RBracket)?;
+                let end_span = self.expect(Token::RBracket)?;
                 Ok(Expr {
                     kind: ExprKind::Array { elements },
-                    span,
+                    span: start_span.merge(end_span),
                 })
             }
-            Some(Token::LBrace) => {
+            Token::LBrace => {
+                let start_span = span;
                 let mut fields = Vec::new();
                 if !matches!(self.current_token(), Some(Token::RBrace)) {
                     loop {
                         let key = match self.advance() {
-                            Some(Token::Ident(k)) => k,
-                            Some(Token::String(k)) => k,
-                            other => return Err(format!("Expected identifier or string for object key, found {:?}", other)),
+                            Some(SpannedToken { token: Token::Ident(k), .. }) => k,
+                            Some(SpannedToken { token: Token::String(k), .. }) => k,
+                            other => {
+                                let err_span =
+                                    other.map(|st| st.span).unwrap_or(self.current_span());
+                                return Err(ParseError::new(
+                                    "expected identifier or string for object key",
+                                    err_span,
+                                ));
+                            }
                         };
                         self.expect(Token::Colon)?;
                         let value = self.parse_expression()?;
@@ -662,35 +897,42 @@ impl TokenParser {
                         }
                     }
                 }
-                self.expect(Token::RBrace)?;
+                let end_span = self.expect(Token::RBrace)?;
                 Ok(Expr {
                     kind: ExprKind::Object { fields },
-                    span,
+                    span: start_span.merge(end_span),
                 })
             }
-            Some(Token::Dot) => {
+            Token::Dot => {
+                let field_span = self.current_span();
                 let field = match self.advance() {
-                    Some(Token::Ident(f)) => f,
+                    Some(SpannedToken { token: Token::Ident(f), span: f_span }) => {
+                        (f, f_span)
+                    }
                     other => {
-                        return Err(format!("Expected field name after dot, found {:?}", other));
+                        return Err(ParseError::new(
+                            "expected field name after '.'",
+                            other.map(|st| st.span).unwrap_or(field_span),
+                        ));
                     }
                 };
+                let full_span = span.merge(field.1);
                 Ok(Expr {
                     kind: ExprKind::FieldAccess {
                         object: Box::new(Expr {
                             kind: ExprKind::Literal(Value::Null),
                             span,
                         }),
-                        field,
+                        field: field.0,
                     },
-                    span,
+                    span: full_span,
                 })
             }
-            other => Err(format!(
-                "Unexpected token in primary expression: {:?}",
-                other
-            )),
+            _ => Err(ParseError::new(
+                format!("unexpected token: {:?}", token),
+                span,
+            )
+            .with_expected(vec!["expression".to_string()])),
         }
     }
 }
-

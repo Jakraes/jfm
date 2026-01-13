@@ -1,3 +1,4 @@
+use jfm::diagnostic::render_diagnostics;
 use jfm::interpreter;
 use jfm::json;
 use std::cell::RefCell;
@@ -253,7 +254,8 @@ fn run_interactive_mode(root_value: jfm::lexer::Value, out_file: &Option<PathBuf
 fn execute_query(query_str: &str, root_value: &jfm::lexer::Value, out_file: &Option<PathBuf>, is_interactive: bool, config: &AppConfig) {
     verbose_log(config, "Parsing query");
     
-    let result = match interpreter::parse_and_run(query_str, root_value.clone()) {
+    // Use the new diagnostic-aware function
+    let result = match interpreter::parse_and_run_with_diagnostics(query_str, root_value.clone()) {
         Ok(Some(result)) => {
             verbose_log(config, "Query executed successfully");
             // Apply limit if specified and result is an array
@@ -264,8 +266,10 @@ fn execute_query(query_str: &str, root_value: &jfm::lexer::Value, out_file: &Opt
             verbose_log(config, "Query returned None, outputting empty object");
             "{}\n".to_string()
         }
-        Err(e) => {
-            error_message(config, &format!("Query error: {}", e));
+        Err(diagnostics) => {
+            // Render pretty diagnostics
+            let rendered = render_diagnostics(query_str, "query", &diagnostics, config.color_enabled);
+            eprint!("{}", rendered);
             std::process::exit(1);
         }
     };

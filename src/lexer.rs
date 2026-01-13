@@ -2,6 +2,7 @@ use chumsky::prelude::*;
 use indexmap::IndexMap;
 use std::rc::Rc;
 use std::cell::{RefCell, Ref};
+use crate::diagnostic::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -159,7 +160,7 @@ pub enum UnaryOp {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Expr {
     pub kind: ExprKind,
-    pub span: SimpleSpan,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
