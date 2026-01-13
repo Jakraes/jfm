@@ -1,1636 +1,334 @@
-# jfm - JSON Query Language Interpreter
+# jfm - JSON Query Language
 
-`jfm` is a powerful command-line tool for querying and transforming JSON data using a custom query language. It provides a rich set of features including filtering, mapping, aggregation, and control flow constructs.
-
-## Table of Contents
-
-- [Installation](#installation)
-- [Usage](#usage)
-- [Query Language](#query-language)
-  - [Basic Syntax](#basic-syntax)
-  - [Data Types](#data-types)
-  - [Variables](#variables)
-  - [Field Access](#field-access)
-  - [Array Operations](#array-operations)
-  - [Operators](#operators)
-  - [Control Flow](#control-flow)
-  - [Built-in Functions](#built-in-functions)
-    - [Array Functions](#array-functions)
-    - [Script Functions](#script-functions)
-    - [I/O Functions](#io-functions)
-  - [Pipe Operator](#pipe-operator)
-- [Examples](#examples)
+`jfm` is a command-line tool for querying and transforming JSON data.
 
 ## Installation
 
-Build the project using Cargo:
-
 ```bash
 cargo build --release
+# Binary: target/release/jfm
 ```
 
-The binary will be available at `target/release/jfm.exe` (Windows) or `target/release/jfm` (Unix-like systems).
+## Quick Start
 
-## Usage
+```bash
+# Query a JSON file
+jfm --file data.json --query "root.users | .age > 25"
 
-The `jfm` tool accepts JSON input and a query string, then executes the query and outputs the result as JSON. If no query is provided via command-line options, the tool enters interactive mode where you can type out your query over multiple lines.
+# Inline JSON
+jfm '{"users": [{"name": "Alice", "age": 30}]}' --query "root.users[0].name"
 
-### Command-Line Options
+# Interactive mode (type query, exit with Ctrl+D)
+jfm --file data.json
+
+# Streaming large files
+jfm --stream --limit 10 --query "root.name" --file huge.json
+```
+
+## CLI Options
 
 ```
 jfm [OPTIONS] [JSON]
 
 Arguments:
-  [JSON]    JSON string to process (conflicts with --file)
+  [JSON]                     JSON string to process
 
 Options:
-  -f, --file <FILE>          Path to JSON file
-  -q, --query <QUERY>        Query string to execute
-      --query-file <PATH>    Path to file containing query (conflicts with --query)
-  -o, --out <OUTPUT_FILE>    Path to output file (default: stdout)
-  -V, --version              Print version information
-      --color <WHEN>         Control colored output [default: auto] [possible values: auto, always, never]
-      --compact              Output minified JSON (no pretty-print)
-  -v, --verbose              Enable verbose/debug mode
-  -n, --limit <N>            Limit output to N results (for array outputs)
-      --stream               Enable streaming mode for large JSON files
-  -h, --help                 Print help
-
-Commands:
-  complete <SHELL>           Generate shell completion scripts [possible values: bash, elvish, fish, powershell, zsh]
+  -f, --file <FILE>          JSON file path
+  -q, --query <QUERY>        Query string
+      --query-file <PATH>    Query file path
+  -o, --out <FILE>           Output file
+  -n, --limit <N>            Limit array results to N items
+      --stream               Stream mode for large files
+      --compact              Minified JSON output
+      --color <WHEN>         Colors: auto|always|never [default: auto]
+  -v, --verbose              Debug mode
+  -V, --version              Version info
+  -h, --help                 Help
 ```
 
-**New Options:**
+Shell completions: `jfm complete bash|zsh|fish|powershell`
 
-- `-V, --version`: Display version information and exit
-- `--color <WHEN>`: Control colored output for error messages. Options:
-  - `auto`: Automatically enable colors when outputting to a TTY (default)
-  - `always`: Always enable colors
-  - `never`: Disable colors
-- `--compact`: Output JSON in compact/minified format (single line, no indentation)
-- `-v, --verbose`: Enable verbose/debug mode. Debug messages are printed to stderr and do not interfere with JSON output
-- `-n, --limit <N>`: Limit the number of results in array outputs. When specified, only the first N elements of array results are returned
-- `--stream`: Enable streaming mode for processing large JSON files. Supports both JSON arrays and newline-delimited JSON (NDJSON) format
-
-### Interactive Mode
-
-When no `--query` or `--query-file` is provided, `jfm` enters interactive mode. This allows you to type your query over multiple lines:
-
-1. Start interactive mode by providing JSON input but no query:
-   ```bash
-   jfm --file data.json
-   ```
-
-2. Type your query line by line. Each line will show a `jfm>` prompt:
-   ```bash
-   jfm> let filtered = root.users | .age > 25;
-   jfm> filtered | .name;
-   ```
-
-3. Exit the editor to execute the query:
-   - Press **Ctrl+D** (Unix/Linux/macOS) or **Ctrl+Z** (Windows) to exit and run the query
-   - Or type `exit` or `quit` on a new line
-
-4. The query executes once after you exit, and the program terminates.
-
-**Example Interactive Session:**
-
-```bash
-$ jfm --file data.json
-jfm Interactive Query Editor
-Type your query (multi-line supported). Exit with Ctrl+D (Ctrl+Z on Windows) or type 'exit' on a new line.
-
-jfm> let users = root.users | .age > 25;
-jfm> users | .name;
-jfm> exit
-["Bob", "Charlie"]
-```
-
-### Examples
-
-**Using a JSON file and inline query:**
-
-```bash
-jfm --file data.json --query "root.users[0].name"
-```
-
-**Using JSON string directly:**
-
-```bash
-jfm '{"users": [{"name": "Alice", "age": 25}]}' --query "root.users | .age > 20"
-```
-
-**Using query file:**
-
-```bash
-jfm --file data.json --query-file query.jfm
-```
-
-**Saving output to a file:**
-
-```bash
-jfm --file data.json --query "root.users | .name" --out results.json
-```
-
-**Interactive mode with output file:**
-
-```bash
-jfm --file data.json --out results.json
-# Type your query interactively
-# Results will be written to results.json
-```
-
-**Reading JSON from stdin:**
-
-When neither `--file` nor a JSON string argument is provided, `jfm` reads JSON from standard input:
-
-```bash
-# Using pipe
-cat data.json | jfm --query "root.users[0].name"
-
-# Using heredoc
-jfm --query "root.users | .age > 25" << EOF
-{
-  "users": [
-    {"name": "Alice", "age": 30},
-    {"name": "Bob", "age": 20}
-  ]
-}
-EOF
-
-# With compact output
-echo '{"result": "success"}' | jfm --query "root.result" --compact
-
-# With verbose mode for debugging
-cat data.json | jfm --query "root.users" --verbose
-```
-
-**Using compact output:**
-
-```bash
-# Pretty-printed output (default)
-jfm --file data.json --query "root.users"
-
-# Compact/minified output
-jfm --file data.json --query "root.users" --compact
-```
-
-**Verbose mode for debugging:**
-
-```bash
-# Enable verbose mode to see debug information
-jfm --file data.json --query "root.users[0].name" --verbose
-
-# Verbose output goes to stderr, JSON output to stdout
-jfm --file data.json --query "root" --verbose > output.json 2> debug.log
-```
-
-**Colored error messages:**
-
-```bash
-# Automatic color detection (default)
-jfm --file data.json --query "invalid.query"
-
-# Force colors
-jfm --color always --file data.json --query "invalid.query"
-
-# Disable colors
-jfm --color never --file data.json --query "invalid.query"
-```
-
-**Displaying version:**
-
-```bash
-jfm --version
-# or
-jfm -V
-```
-
-**Limiting output results:**
-
-```bash
-# Get only the first 3 users from an array
-jfm --file data.json --query "root.users" --limit 3
-
-# Short form
-jfm --file data.json --query "root.users" -n 5
-
-# Limit combined with filtering
-jfm '{"items": [1,2,3,4,5,6,7,8,9,10]}' --query "root.items | . > 3" --limit 2
-# Output: [4, 5]
-```
-
-**Streaming mode for large files:**
-
-Streaming mode is useful for processing large JSON files efficiently without loading everything into memory at once. It supports both JSON arrays and newline-delimited JSON (NDJSON).
-
-```bash
-# Process a large JSON array - each element is processed individually
-jfm --stream --query "root.name" --file large_array.json
-
-# Process NDJSON (newline-delimited JSON) - one JSON object per line
-cat logs.ndjson | jfm --stream --query "root.level"
-
-# Combine streaming with limit to get first N results quickly
-jfm --stream --limit 10 --query "root.id" --file huge_dataset.json
-```
-
-NDJSON format example (each line is a separate JSON object):
-```json
-{"id": 1, "name": "Alice"}
-{"id": 2, "name": "Bob"}
-{"id": 3, "name": "Charlie"}
-```
-
-**Shell Completions:**
-
-Generate shell completion scripts for bash, zsh, fish, or PowerShell:
-
-```bash
-# Generate completions for your shell
-jfm complete bash > ~/.bash_completion.d/jfm
-jfm complete zsh > ~/.zsh/completions/_jfm
-jfm complete fish > ~/.config/fish/completions/jfm.fish
-jfm complete powershell > ~/.config/powershell/jfm.ps1
-
-# Then reload your shell or source the completion file
-# For bash:
-source ~/.bash_completion.d/jfm
-
-# For zsh:
-source ~/.zsh/completions/_jfm
-
-# For fish:
-# Completions are automatically loaded
-
-# For PowerShell:
-# Add the completion script to your PowerShell profile
-```
-
-**Installing Shell Completions:**
-
-**Bash:**
-```bash
-# System-wide installation
-sudo jfm complete bash > /usr/share/bash-completion/completions/jfm
-
-# User installation
-mkdir -p ~/.bash_completion.d
-jfm complete bash > ~/.bash_completion.d/jfm
-echo "source ~/.bash_completion.d/jfm" >> ~/.bashrc
-```
-
-**Zsh:**
-```bash
-# Using Oh My Zsh
-mkdir -p ~/.oh-my-zsh/completions
-jfm complete zsh > ~/.oh-my-zsh/completions/_jfm
-echo "fpath=(~/.oh-my-zsh/completions $fpath)" >> ~/.zshrc
-
-# Manual installation
-mkdir -p ~/.zsh/completions
-jfm complete zsh > ~/.zsh/completions/_jfm
-echo "fpath=(~/.zsh/completions $fpath)" >> ~/.zshrc
-autoload -U compinit && compinit
-```
-
-**Fish:**
-```bash
-mkdir -p ~/.config/fish/completions
-jfm complete fish > ~/.config/fish/completions/jfm.fish
-```
-
-**PowerShell:**
-```powershell
-# Generate and save completions
-jfm complete powershell | Out-File -Encoding utf8 ~/.config/powershell/jfm.ps1
-
-# Add to PowerShell profile
-Add-Content $PROFILE "`n. ~/.config/powershell/jfm.ps1"
-```
-
-## Query Language
-
-### Basic Syntax
-
-The query language uses statements terminated by semicolons (`;`). The last expression's value is returned as the result.
-
-```jfm
-let x = 10;
-let y = x + 5;
-y;
-```
+## Language Reference
 
 ### Data Types
 
-The language supports all standard JSON types:
-
-- **Numbers**: `10`, `3.14`, `-5`
-- **Strings**: `"hello"`, `"world"`
-- **Booleans**: `true`, `false`
-- **Null**: `null`
-- **Arrays**: `[1, 2, 3]`, `["a", "b", "c"]`
-- **Objects**: `{"name": "Alice", "age": 30}`
+```jfm
+42, 3.14           // Numbers
+"hello"            // Strings
+true, false        // Booleans
+null               // Null
+[1, 2, 3]          // Arrays
+{"key": "value"}   // Objects
+x => x * 2         // Lambdas
+```
 
 ### Variables
 
-Variables are declared using the `let` keyword:
-
-```jfm
-let name = "Alice";
-let age = 30;
-let numbers = [1, 2, 3, 4, 5];
-```
-
-Variables can be reassigned:
-
 ```jfm
 let x = 10;
-x = 20;
-x;
+x = 20;           // Reassign
 ```
 
 ### Field Access
 
-Access object fields using the dot operator (`.`):
-
 ```jfm
-root.user.name
-root.data.items[0].title
-```
-
-**Optional chaining** (`?.`) returns `null` if any part of the chain is null:
-
-```jfm
-root?.missing?.field  // Returns null if any part is missing
-root.user?.name       // Safe access
-```
-
-### Array Operations
-
-**Indexing:**
-
-```jfm
-root.items[0]      // First element
-root.items[1]      // Second element
-root.users[0].name // Access field of array element
-```
-
-**Array length:**
-
-```jfm
-root.items.length  // Number of elements
-```
-
-**Array literals:**
-
-```jfm
-let numbers = [1, 2, 3, 4, 5];
-let names = ["Alice", "Bob", "Charlie"];
-let mixed = [1, "two", true, null];
-```
-
-**Object literals:**
-
-```jfm
-let user = {"name": "Alice", "age": 30, "active": true};
-let nested = {"user": {"name": "Bob", "details": {"age": 25}}};
+root.user.name             // Dot notation
+root.users[0].name         // Array index
+root?.missing?.field       // Optional chaining (returns null)
+root.items.length          // Array length
 ```
 
 ### Operators
 
-#### Arithmetic Operators
-
 ```jfm
-let sum = 10 + 5;        // 15
-let diff = 10 - 5;       // 5
-let product = 10 * 5;    // 50
-let quotient = 10 / 5;   // 2
-let remainder = 10 % 3;  // 1
-let power = 2 ^ 3;       // 8 (exponentiation)
-```
+// Arithmetic
++ - * / % ^
 
-#### Comparison Operators
+// Comparison
+== != > < >= <=
 
-```jfm
-let eq = 10 == 10;       // true
-let ne = 10 != 5;        // true
-let gt = 10 > 5;         // true
-let lt = 5 < 10;         // true
-let ge = 10 >= 10;       // true
-let le = 5 <= 10;        // true
-```
+// Logical
+&& || !
 
-#### Logical Operators
+// Compound assignment
++= -= *= /=
 
-```jfm
-let and = true && false; // false
-let or = true || false;  // true
-let not = !false;        // true
-```
+// Range
+1..5               // [1, 2, 3, 4, 5]
 
-#### Compound Assignment Operators
-
-```jfm
-let x = 10;
-x += 5;   // x = 15
-x -= 3;   // x = 12
-x *= 2;   // x = 24
-x /= 4;   // x = 6
-```
-
-#### String Concatenation
-
-```jfm
-let fullName = "John" + " " + "Doe";  // "John Doe"
-```
-
-#### Array Concatenation
-
-```jfm
-let combined = [1, 2] + [3, 4];  // [1, 2, 3, 4]
-```
-
-#### Range Operator
-
-Generate arrays of consecutive numbers:
-
-```jfm
-let range1 = 1..5;    // [1, 2, 3, 4, 5]
-let range2 = 0..10;   // [0, 1, 2, ..., 10]
-let negative = -3..0; // [-3, -2, -1, 0]
+// Concatenation
+"a" + "b"          // "ab"
+[1, 2] + [3, 4]    // [1, 2, 3, 4]
 ```
 
 ### Control Flow
 
-#### If-Else Statements
-
 ```jfm
-if age >= 18 {
-    "adult";
-} else {
-    "minor";
-}
-```
+// If-else
+if age >= 18 { "adult" } else { "minor" }
 
-Chained if-else:
-
-```jfm
-if score >= 90 {
-    "A";
-} else if score >= 80 {
-    "B";
-} else if score >= 70 {
-    "C";
-} else {
-    "F";
-}
-```
-
-#### For Loops
-
-Iterate over arrays:
-
-```jfm
-let names = [];
+// For loop
 for user in root.users {
-    names += [user.name];
+    print(user.name);
 }
-names;
+
+// While loop
+while x < 10 { x = x + 1; }
+
+// Break/continue
+for x in 1..10 {
+    if x == 5 { break; }
+    if x % 2 == 0 { continue; }
+}
 ```
 
-Modify elements in a loop:
+### Functions
 
 ```jfm
-for e in root.employees {
-    e.salary = e.salary * 1.10;
-}
-root.employees;
-```
-
-#### While Loops
-
-Iterate while a condition is true:
-
-```jfm
-let x = 0;
-while x < 10 {
-    x = x + 1;
-}
-x;
-```
-
-While loops can be used for complex iteration patterns:
-
-```jfm
-let sum = 0;
-let i = 0;
-let arr = [1, 2, 3, 4, 5];
-while i < arr.length {
-    sum = sum + arr[i];
-    i = i + 1;
-}
-sum;
-```
-
-#### Break and Continue
-
-Exit loops early with `break`:
-
-```jfm
-let x = 0;
-while true {
-    x = x + 1;
-    if x >= 5 {
-        break;
-    }
-}
-x;
-```
-
-Skip to the next iteration with `continue`:
-
-```jfm
-let sum = 0;
-for x in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] {
-    if x % 2 == 0 {
-        continue;
-    }
-    sum = sum + x;
-}
-sum;
-```
-
-Both `break` and `continue` work in `for` and `while` loops.
-
-#### Blocks
-
-Code blocks create new scopes:
-
-```jfm
-let x = 1;
-{
-    let x = 2;
-    x;  // 2
-}
-x;  // 1 (outer scope)
-```
-
-#### Return Statements
-
-```jfm
-if condition {
-    return value;
-}
-// Continue execution...
-```
-
-#### Lambda Functions
-
-Create anonymous functions:
-
-```jfm
+// Lambda
 let double = x => x * 2;
-double(5);
-```
-
-Multiple parameters:
-
-```jfm
 let add = (x, y) => x + y;
-add(3, 4);
-```
 
-No parameters:
-
-```jfm
-let get_five = () => 5;
-get_five();
-```
-
-Lambdas can be assigned to variables and called like regular functions. They capture variables from their surrounding scope.
-
-#### User-Defined Functions
-
-Define named functions with the `fn` keyword:
-
-```jfm
-fn add(x, y) {
-    return x + y;
-}
-add(5, 3);
-```
-
-Functions can have multiple statements:
-
-```jfm
-fn multiply(x, y) {
-    let result = x * y;
-    return result;
-}
-multiply(4, 7);
-```
-
-Functions return values through `return` statements, or the last expression if no `return` is used:
-
-```jfm
-fn get_ten() {
-    let x = 10;
-    x;
-}
-get_ten();
-```
-
-Functions can call other functions and support recursion:
-
-```jfm
+// Named function
 fn factorial(n) {
-    if n <= 1 {
-        return 1;
-    } else {
-        return n * factorial(n - 1);
-    }
-}
-factorial(5);
-```
-
-Functions can use conditionals, loops, and all other language features in their bodies.
-
-### Built-in Functions
-
-#### Array Functions
-
-**`count(array)`** - Returns the number of elements in an array:
-
-```jfm
-count(root.users);  // Number of users
-```
-
-**`sum(array)`** - Sums all numeric values in an array:
-
-```jfm
-sum([1, 2, 3, 4, 5]);  // 15
-sum(root.users | .age);  // Sum of all user ages
-```
-
-**`avg(array)`** - Calculates the average of numeric values:
-
-```jfm
-avg([10, 20, 30]);  // 20
-avg(root.users | .age);  // Average age
-```
-
-**`min(array)`** - Returns the minimum numeric value:
-
-```jfm
-min([5, 2, 8, 1]);  // 1
-min(root.users | .age);  // Minimum age
-```
-
-**`max(array)`** - Returns the maximum numeric value:
-
-```jfm
-max([5, 2, 8, 1]);  // 8
-max(root.users | .age);  // Maximum age
-```
-
-**`take(array, count)`** - Returns the first `count` elements:
-
-```jfm
-take([1, 2, 3, 4, 5], 3);  // [1, 2, 3]
-take(sort_by(root.users, "age"), 5);  // Top 5 users by age
-```
-
-**`unique(array)`** - Removes duplicate values:
-
-```jfm
-unique([1, 2, 2, 3, 3, 3]);  // [1, 2, 3]
-```
-
-**`push(array, value)`** - Adds an element to the end of an array:
-
-```jfm
-let items = [1, 2];
-items = push(items, 3);  // [1, 2, 3]
-```
-
-**`sort_by(array, field)`** - Sorts an array of objects by a field:
-
-```jfm
-sort_by(root.users, "age");  // Sort users by age (ascending)
-sort_by(root.users, "name");  // Sort users by name
-```
-
-**`group_by(array, field)`** - Groups array elements by a field value:
-
-```jfm
-group_by(root.users, "age");  // Groups users by age
-// Returns: {"25": [...], "30": [...], "35": [...]}
-```
-
-**`reverse(array)`** - Returns a new array with elements in reversed order:
-
-```jfm
-reverse([1, 2, 3]);  // [3, 2, 1]
-```
-
-**`sort(array)`** - Sorts an array of primitive values (numbers or strings):
-
-```jfm
-sort([3, 1, 4, 1, 5]);  // [1, 1, 3, 4, 5]
-sort(["zebra", "apple", "banana"]);  // ["apple", "banana", "zebra"]
-```
-
-**`slice(array, start, end)`** - Extracts a portion of an array:
-
-```jfm
-slice([1, 2, 3, 4, 5], 1, 4);  // [2, 3, 4]
-slice([1, 2, 3, 4, 5], 2);  // [3, 4, 5] (from index 2 to end)
-slice([1, 2, 3, 4, 5], -2);  // [4, 5] (last 2 elements)
-```
-
-**`pop(array)`** - Removes and returns the last element of an array:
-
-```jfm
-let arr = [1, 2, 3];
-pop(arr);  // Returns 3, arr is now [1, 2]
-```
-
-**`shift(array)`** - Removes and returns the first element of an array:
-
-```jfm
-let arr = [1, 2, 3];
-shift(arr);  // Returns 1, arr is now [2, 3]
-```
-
-**`flat(array)`** / **`flatten(array, depth)`** - Flattens nested arrays:
-
-```jfm
-flat([[1, 2], [3, 4]]);  // [1, 2, 3, 4]
-flatten([[[1]], [[2]]], 2);  // [1, 2] (flatten 2 levels deep)
-```
-
-**`find(array, predicate)`** - Finds the first element that matches a predicate function:
-
-```jfm
-find([1, 2, 3, 4, 5], x => x > 3);  // 4
-find(root.users, u => u.age > 30);  // First user with age > 30
-```
-
-**`find_index(array, predicate)`** - Finds the index of the first element that matches a predicate:
-
-```jfm
-find_index([1, 2, 3, 4, 5], x => x > 3);  // 3
-find_index([1, 2, 3], x => x > 10);  // -1 (not found)
-```
-
-**`reduce(array, fn, initial)`** - Reduces an array to a single value using a reducer function:
-
-```jfm
-reduce([1, 2, 3, 4], (acc, val) => acc + val, 0);  // 10
-reduce([2, 3, 4], (acc, val) => acc * val, 1);  // 24
-```
-
-**`every(array, predicate)`** - Checks if all elements match a predicate:
-
-```jfm
-every([2, 4, 6], x => x % 2 == 0);  // true
-every([2, 4, 5], x => x % 2 == 0);  // false
-every([], x => x > 0);  // true (empty array returns true)
-```
-
-**`some(array, predicate)`** - Checks if any element matches a predicate:
-
-```jfm
-some([1, 2, 3], x => x > 2);  // true
-some([1, 2, 3], x => x > 10);  // false
-```
-
-**`zip(array1, array2)`** - Combines two arrays into pairs:
-
-```jfm
-zip([1, 2, 3], [4, 5, 6]);  // [[1, 4], [2, 5], [3, 6]]
-zip([1, 2], [3, 4, 5]);  // [[1, 3], [2, 4]] (uses minimum length)
-```
-
-**`first(array)`** - Returns the first element of an array, or `null` if empty:
-
-```jfm
-first([1, 2, 3]);  // 1
-first([]);  // null
-```
-
-**`last(array)`** - Returns the last element of an array, or `null` if empty:
-
-```jfm
-last([1, 2, 3]);  // 3
-last([]);  // null
-```
-
-#### String Functions
-
-**`split(str, delimiter)`** - Splits a string into an array:
-
-```jfm
-split("a,b,c", ",");  // ["a", "b", "c"]
-split("hello world", " ");  // ["hello", "world"]
-```
-
-**`join(array, delimiter)`** - Joins an array into a string:
-
-```jfm
-join(["a", "b", "c"], ",");  // "a,b,c"
-join([1, 2, 3], "-");  // "1-2-3"
-```
-
-**`trim(str)`** - Removes leading and trailing whitespace:
-
-```jfm
-trim("  hello  ");  // "hello"
-```
-
-**`upper(str)`** - Converts a string to uppercase:
-
-```jfm
-upper("hello");  // "HELLO"
-```
-
-**`lower(str)`** - Converts a string to lowercase:
-
-```jfm
-lower("HELLO");  // "hello"
-```
-
-**`contains(str, substr)`** - Checks if a string contains a substring:
-
-```jfm
-contains("hello world", "world");  // true
-contains("hello", "xyz");  // false
-```
-
-**`starts_with(str, prefix)`** - Checks if a string starts with a prefix:
-
-```jfm
-starts_with("hello", "he");  // true
-starts_with("hello", "lo");  // false
-```
-
-**`ends_with(str, suffix)`** - Checks if a string ends with a suffix:
-
-```jfm
-ends_with("hello", "lo");  // true
-ends_with("hello", "he");  // false
-```
-
-**`replace(str, from, to)`** - Replaces the first occurrence of a substring:
-
-```jfm
-replace("hello world", "world", "rust");  // "hello rust"
-```
-
-**`len(str)`** - Returns the length of a string:
-
-```jfm
-len("hello");  // 5
-```
-
-#### Object Functions
-
-**`keys(object)`** - Returns an array of object keys:
-
-```jfm
-keys({"name": "Alice", "age": 30});  // ["name", "age"]
-```
-
-**`values(object)`** - Returns an array of object values:
-
-```jfm
-values({"name": "Alice", "age": 30});  // ["Alice", 30]
-```
-
-**`entries(object)`** - Returns an array of [key, value] pairs:
-
-```jfm
-entries({"name": "Alice", "age": 30});  // [["name", "Alice"], ["age", 30]]
-```
-
-**`has(object, key)`** - Checks if an object has a key:
-
-```jfm
-has({"name": "Alice"}, "name");  // true
-has({"name": "Alice"}, "age");  // false
-```
-
-**`merge(obj1, obj2)`** - Merges two objects, with obj2 values overriding obj1:
-
-```jfm
-merge({"a": 1, "b": 2}, {"b": 3, "c": 4});  // {"a": 1, "b": 3, "c": 4}
-```
-
-#### Type Functions
-
-**`typeof(value)`** - Returns the type of a value as a string:
-
-```jfm
-typeof(42);  // "number"
-typeof("hello");  // "string"
-typeof([1, 2, 3]);  // "array"
-typeof({"key": "value"});  // "object"
-typeof(null);  // "null"
-typeof(true);  // "bool"
-```
-
-**`is_null(v)`** - Checks if a value is null:
-
-```jfm
-is_null(null);  // true
-is_null(42);  // false
-```
-
-**`is_array(v)`** - Checks if a value is an array:
-
-```jfm
-is_array([1, 2, 3]);  // true
-is_array(42);  // false
-```
-
-**`is_object(v)`** - Checks if a value is an object:
-
-```jfm
-is_object({"key": "value"});  // true
-is_object(42);  // false
-```
-
-**`is_string(v)`** - Checks if a value is a string:
-
-```jfm
-is_string("hello");  // true
-is_string(42);  // false
-```
-
-**`is_number(v)`** - Checks if a value is a number:
-
-```jfm
-is_number(42);  // true
-is_number("42");  // false
-```
-
-**`is_bool(v)`** - Checks if a value is a boolean:
-
-```jfm
-is_bool(true);  // true
-is_bool(42);  // false
-```
-
-**`to_string(v)`** - Converts a value to a string:
-
-```jfm
-to_string(42);  // "42"
-to_string(true);  // "true"
-to_string([1, 2, 3]);  // "[1, 2, 3]"
-```
-
-**`to_number(v)`** - Converts a value to a number:
-
-```jfm
-to_number("42");  // 42
-to_number(42);  // 42 (already a number)
-```
-
-**`parse_json(str)`** - Parses a JSON string into a value:
-
-```jfm
-parse_json("{\"key\": \"value\"}");  // {"key": "value"}
-parse_json("[1, 2, 3]");  // [1, 2, 3]
-```
-
-#### Math Functions
-
-**`floor(n)`** - Returns the largest integer less than or equal to a number:
-
-```jfm
-floor(3.7);  // 3
-floor(-3.7);  // -4
-```
-
-**`ceil(n)`** - Returns the smallest integer greater than or equal to a number:
-
-```jfm
-ceil(3.2);  // 4
-ceil(-3.2);  // -3
-```
-
-**`round(n)`** - Rounds a number to the nearest integer:
-
-```jfm
-round(3.5);  // 4
-round(3.2);  // 3
-```
-
-**`abs(n)`** - Returns the absolute value of a number:
-
-```jfm
-abs(-5);  // 5
-abs(5);  // 5
-```
-
-**`sqrt(n)`** - Returns the square root of a number:
-
-```jfm
-sqrt(16);  // 4
-sqrt(9);  // 3
-```
-
-**`pow(a, b)`** - Returns base raised to the power of exponent:
-
-```jfm
-pow(2, 3);  // 8
-pow(10, 2);  // 100
-```
-
-**`sin(n)`** - Returns the sine of a number (in radians):
-
-```jfm
-sin(0);  // 0
-sin(3.14159 / 2);  // approximately 1
-```
-
-**`cos(n)`** - Returns the cosine of a number (in radians):
-
-```jfm
-cos(0);  // 1
-cos(3.14159);  // approximately -1
-```
-
-**`tan(n)`** - Returns the tangent of a number (in radians):
-
-```jfm
-tan(0);  // 0
-```
-
-**`random()`** - Returns a random number between 0.0 and 1.0:
-
-```jfm
-random();  // Random number between 0 and 1
-```
-
-#### Script Functions
-
-**`include(path)`** - Executes an external script file and returns its result:
-
-The `include` function allows you to modularize your queries by executing external script files. The included script has access to all variables in the current scope, including `root`, and can return any value.
-
-```jfm
-// Execute a script and assign its result to a variable
-let result = include("scripts/calculate.jfm");
-
-// Use the result in further computations
-result * 2;
-```
-
-**Basic Usage:**
-
-```jfm
-// File: filter_adults.jfm
-let adults = root.users | .age >= 18;
-adults;
-
-// Main query
-let adult_users = include("filter_adults.jfm");
-count(adult_users);
-```
-
-**Script with Shared Variables:**
-
-Included scripts can access variables defined in the parent scope:
-
-```jfm
-// Main query
-let multiplier = 10;
-let result = include("compute.jfm");  // Script can access 'multiplier'
-result;
-
-// File: compute.jfm
-let base = 5;
-base * multiplier;  // Returns 50
-```
-
-**Nested Includes:**
-
-Scripts can include other scripts, enabling complex modular architectures:
-
-```jfm
-// File: utils.jfm
-let helper_value = 100;
-helper_value;
-
-// File: main_logic.jfm
-let from_utils = include("utils.jfm");
-from_utils * 2;  // Returns 200
-
-// Main query
-include("main_logic.jfm");  // Returns 200
-```
-
-**Returning Complex Data:**
-
-Included scripts can return any data type:
-
-```jfm
-// File: aggregate.jfm
-let ages = root.users | .age;
-let stats = {"average": avg(ages), "total": sum(ages), "count": count(ages)};
-stats;
-
-// Main query
-let statistics = include("aggregate.jfm");
-statistics.average;
-```
-
-**Error Handling:**
-
-- If the file does not exist, an error is returned
-- If the script contains syntax errors, a parse error is returned
-- If the script encounters runtime errors, those are propagated
-
-#### I/O Functions
-
-**`print(args...)`** - Prints values to standard output:
-
-The `print` function outputs one or more values to stdout, separated by spaces, followed by a newline. It works similarly to Python's `print()` function.
-
-```jfm
-print("Hello, World!");              // Output: Hello, World!
-print("Name:", root.name);           // Output: Name: Alice
-print("Values:", 1, 2, 3);           // Output: Values: 1 2 3
-print();                             // Output: (empty line)
-```
-
-**Printing Different Types:**
-
-```jfm
-// Strings - printed without quotes
-print("Hello");                      // Output: Hello
-
-// Numbers - printed as-is
-print(42);                           // Output: 42
-print(3.14);                         // Output: 3.14
-
-// Booleans
-print(true, false);                  // Output: true false
-
-// Null
-print(null);                         // Output: null
-
-// Arrays - printed in bracket notation
-print([1, 2, 3]);                    // Output: [1, 2, 3]
-
-// Objects - printed in brace notation
-let obj = {"x": 1, "y": 2};
-print(obj);                          // Output: {"x": 1, "y": 2}
-```
-
-**Debugging with print:**
-
-```jfm
-for user in root.users {
-    print("Processing:", user.name, "age:", user.age);
-    // ... processing logic
+    if n <= 1 { return 1; }
+    return n * factorial(n - 1);
 }
 ```
-
-**Return Value:**
-
-`print` always returns `null`, so it can be used as a statement without affecting the result:
-
-```jfm
-let result = root.users | .age > 25;
-print("Filtered count:", count(result));
-result;  // This is the actual return value
-```
-
----
-
-**`input(prompt?)`** - Reads a line of input from standard input:
-
-The `input` function reads a line from stdin and returns it as a string. An optional prompt message can be displayed before reading.
-
-```jfm
-let name = input("Enter your name: ");
-print("Hello,", name);
-
-let age = input("Enter your age: ");
-// Note: input always returns a string
-```
-
-**Without Prompt:**
-
-```jfm
-let value = input();  // Waits for input without displaying a prompt
-```
-
-**Interactive Scripts:**
-
-```jfm
-let filename = input("Enter filename to process: ");
-let data = include(filename);
-print("Loaded", count(data), "records");
-```
-
-**Note:** The `input` function is primarily useful in interactive mode or when running jfm scripts that require user interaction. In automated/batch processing scenarios, consider passing data through the JSON input instead.
 
 ### Pipe Operator
 
-The pipe operator (`|`) is a powerful feature for filtering and transforming arrays. It passes each element of the array through the expression on the right.
-
-#### Filtering
-
-When the right-hand expression evaluates to a boolean, it filters the array:
+Filter and transform arrays:
 
 ```jfm
-root.users | .age > 25;  // Users older than 25
-root.users | .active == true;  // Active users
-root.users | .age > 30 && .active == true;  // Active users over 30
+root.users | .age > 25           // Filter: users over 25
+root.users | .name               // Map: extract names
+root.users | .age > 25 | .name   // Chain: filter then map
 ```
 
-#### Mapping
+## Built-in Functions
 
-When the right-hand expression returns a value, it maps over the array:
+### Array
 
-```jfm
-root.users | .name;  // Extract all names
-root.users | .age * 2;  // Double all ages
-root.users | {"name": .name, "age": .age};  // Transform to new objects
-```
+| Function | Description | Example |
+|----------|-------------|---------|
+| `count(arr)` | Array length | `count([1,2,3])` → 3 |
+| `sum(arr)` | Sum numbers | `sum([1,2,3])` → 6 |
+| `avg(arr)` | Average | `avg([1,2,3])` → 2 |
+| `min(arr)` | Minimum | `min([3,1,2])` → 1 |
+| `max(arr)` | Maximum | `max([1,3,2])` → 3 |
+| `take(arr, n)` | First n items | `take([1,2,3], 2)` → [1,2] |
+| `unique(arr)` | Remove duplicates | `unique([1,1,2])` → [1,2] |
+| `sort(arr)` | Sort primitives | `sort([3,1,2])` → [1,2,3] |
+| `sort_by(arr, field)` | Sort by field | `sort_by(users, "age")` |
+| `group_by(arr, field)` | Group by field | `group_by(users, "age")` |
+| `reverse(arr)` | Reverse | `reverse([1,2,3])` → [3,2,1] |
+| `slice(arr, start, end?)` | Slice array | `slice([1,2,3,4], 1, 3)` → [2,3] |
+| `push(arr, val)` | Append | `push([1,2], 3)` → [1,2,3] |
+| `pop(arr)` | Remove last | `pop([1,2,3])` → 3 |
+| `shift(arr)` | Remove first | `shift([1,2,3])` → 1 |
+| `flat(arr, depth?)` | Flatten | `flat([[1],[2]])` → [1,2] |
+| `first(arr)` | First element | `first([1,2])` → 1 |
+| `last(arr)` | Last element | `last([1,2])` → 2 |
+| `zip(a, b)` | Pair arrays | `zip([1,2],[3,4])` → [[1,3],[2,4]] |
+| `find(arr, fn)` | Find first match | `find([1,2,3], x => x > 1)` → 2 |
+| `find_index(arr, fn)` | Find index | `find_index([1,2,3], x => x > 1)` → 1 |
+| `every(arr, fn)` | All match? | `every([2,4], x => x % 2 == 0)` → true |
+| `some(arr, fn)` | Any match? | `some([1,2], x => x > 1)` → true |
+| `reduce(arr, fn, init)` | Reduce | `reduce([1,2,3], (a,v) => a+v, 0)` → 6 |
 
-#### Field Access Shorthand
+### String
 
-Inside pipe expressions, you can use `.field` as shorthand for the current item:
+| Function | Description | Example |
+|----------|-------------|---------|
+| `len(s)` | Length | `len("hello")` → 5 |
+| `trim(s)` | Trim whitespace | `trim("  hi  ")` → "hi" |
+| `upper(s)` | Uppercase | `upper("hi")` → "HI" |
+| `lower(s)` | Lowercase | `lower("HI")` → "hi" |
+| `split(s, delim)` | Split | `split("a,b", ",")` → ["a","b"] |
+| `join(arr, delim)` | Join | `join(["a","b"], ",")` → "a,b" |
+| `contains(s, sub)` | Contains? | `contains("hello", "ell")` → true |
+| `starts_with(s, pre)` | Starts with? | `starts_with("hello", "he")` → true |
+| `ends_with(s, suf)` | Ends with? | `ends_with("hello", "lo")` → true |
+| `replace(s, from, to)` | Replace | `replace("hi", "i", "o")` → "ho" |
 
-```jfm
-root.users | .name;  // Equivalent to: root.users | _it.name
-```
+### Object
 
-#### Complex Pipe Expressions
+| Function | Description | Example |
+|----------|-------------|---------|
+| `keys(obj)` | Get keys | `keys({"a":1})` → ["a"] |
+| `values(obj)` | Get values | `values({"a":1})` → [1] |
+| `entries(obj)` | Key-value pairs | `entries({"a":1})` → [["a",1]] |
+| `has(obj, key)` | Has key? | `has({"a":1}, "a")` → true |
+| `merge(o1, o2)` | Merge objects | `merge({"a":1}, {"b":2})` |
 
-```jfm
-root.users | .name == "Bob" || .name == "Alice";  // Users named Bob or Alice
-root.users | .age > 25 | .name;  // Names of users over 25
-```
+### Type
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `typeof(v)` | Type name | `typeof(42)` → "number" |
+| `is_null(v)` | Is null? | `is_null(null)` → true |
+| `is_array(v)` | Is array? | `is_array([])` → true |
+| `is_object(v)` | Is object? | `is_object({})` → true |
+| `is_string(v)` | Is string? | `is_string("hi")` → true |
+| `is_number(v)` | Is number? | `is_number(42)` → true |
+| `is_bool(v)` | Is bool? | `is_bool(true)` → true |
+| `to_string(v)` | Convert to string | `to_string(42)` → "42" |
+| `to_number(v)` | Convert to number | `to_number("42")` → 42 |
+| `parse_json(s)` | Parse JSON string | `parse_json("[1,2]")` → [1,2] |
+
+### Math
+
+| Function | Description |
+|----------|-------------|
+| `floor(n)` | Floor |
+| `ceil(n)` | Ceiling |
+| `round(n)` | Round |
+| `abs(n)` | Absolute value |
+| `sqrt(n)` | Square root |
+| `pow(a, b)` | Power |
+| `sin(n)`, `cos(n)`, `tan(n)` | Trigonometry |
+| `random()` | Random 0-1 |
+
+### I/O & Script
+
+| Function | Description |
+|----------|-------------|
+| `print(args...)` | Print to stdout |
+| `input(prompt?)` | Read line from stdin |
+| `include(path)` | Execute external script |
 
 ## Examples
 
-### Example 1: Simple Field Access
+### Filter and Transform
 
-**Input JSON:**
-```json
-{
-  "name": "Alice",
-  "age": 30,
-  "city": "New York"
-}
-```
-
-**Query:**
 ```jfm
-root.name;
+// Filter adults and extract names
+root.users | .age >= 18 | .name
+
+// Get top 3 by score
+take(sort_by(root.users, "score"), 3)
+
+// Group by department
+group_by(root.employees, "department")
 ```
 
-**Output:**
-```json
-"Alice"
-```
+### Aggregation
 
-### Example 2: Filtering Users
-
-**Input JSON:**
-```json
-{
-  "users": [
-    {"name": "Bob", "age": 30},
-    {"name": "Alice", "age": 25},
-    {"name": "Charlie", "age": 35}
-  ]
-}
-```
-
-**Query:**
-```jfm
-root.users | .age > 28;
-```
-
-**Output:**
-```json
-[{"name": "Bob", "age": 30}, {"name": "Charlie", "age": 35}]
-```
-
-### Example 3: Extracting Names
-
-**Query:**
-```jfm
-root.users | .name;
-```
-
-**Output:**
-```json
-["Bob", "Alice", "Charlie"]
-```
-
-### Example 4: Conditional Logic
-
-**Query:**
-```jfm
-let results = [];
-for u in root.users {
-    if u.age > 30 {
-        results += ["Senior"];
-    } else {
-        results += ["Junior"];
-    }
-}
-results;
-```
-
-**Output:**
-```json
-["Junior", "Junior", "Senior"]
-```
-
-### Example 5: Aggregation
-
-**Query:**
-```jfm
-avg(root.users | .age);
-```
-
-**Output:**
-```json
-30
-```
-
-### Example 6: Complex Filtering
-
-**Query:**
-```jfm
-root.users | .name == "Bob" || .name == "Alice";
-```
-
-**Output:**
-```json
-[{"name": "Bob", "age": 30}, {"name": "Alice", "age": 25}]
-```
-
-### Example 7: Sorting
-
-**Query:**
-```jfm
-sort_by(root.users, "age");
-```
-
-**Output:**
-```json
-[
-  {"name": "Alice", "age": 25},
-  {"name": "Bob", "age": 30},
-  {"name": "Charlie", "age": 35}
-]
-```
-
-### Example 8: Grouping
-
-**Query:**
-```jfm
-group_by(root.users, "age");
-```
-
-**Output:**
-```json
-{
-  "25": [{"name": "Alice", "age": 25}],
-  "30": [{"name": "Bob", "age": 30}],
-  "35": [{"name": "Charlie", "age": 35}]
-}
-```
-
-### Example 9: Transforming Data
-
-**Query:**
-```jfm
-for u in root.users {
-    u.status = if u.age > 30 { "Senior" } else { "Junior" };
-}
-root.users;
-```
-
-**Input JSON:**
-```json
-{
-  "users": [
-    {"name": "Bob", "age": 30},
-    {"name": "Alice", "age": 25},
-    {"name": "Charlie", "age": 35}
-  ]
-}
-```
-
-**Output:**
-```json
-[
-  {"name": "Bob", "age": 30, "status": "Junior"},
-  {"name": "Alice", "age": 25, "status": "Junior"},
-  {"name": "Charlie", "age": 35, "status": "Senior"}
-]
-```
-
-### Example 10: Nested Field Access
-
-**Input JSON:**
-```json
-{
-  "company": {
-    "employees": [
-      {"name": "Alice", "department": {"name": "Engineering", "floor": 3}},
-      {"name": "Bob", "department": {"name": "Sales", "floor": 2}}
-    ]
-  }
-}
-```
-
-**Query:**
-```jfm
-root.company.employees | .department.name;
-```
-
-**Output:**
-```json
-["Engineering", "Sales"]
-```
-
-### Example 11: Multiple Operations
-
-**Query:**
-```jfm
-let topUsers = take(sort_by(root.users, "age"), 2);
-topUsers | .name;
-```
-
-**Output:**
-```json
-["Alice", "Bob"]
-```
-
-### Example 12: Working with Numbers
-
-**Query:**
 ```jfm
 let ages = root.users | .age;
-let total = sum(ages);
-let average = avg(ages);
-let minAge = min(ages);
-let maxAge = max(ages);
-{"total": total, "average": average, "min": minAge, "max": maxAge};
-```
-
-**Output:**
-```json
-{"total": 90, "average": 30, "min": 25, "max": 35}
-```
-
-### Example 13: String Operations
-
-**Input JSON:**
-```json
 {
-  "firstName": "John",
-  "lastName": "Doe"
+    "count": count(ages),
+    "avg": avg(ages),
+    "min": min(ages),
+    "max": max(ages)
 }
 ```
 
-**Query:**
+### Data Transformation
+
 ```jfm
-root.firstName + " " + root.lastName;
-```
-
-**Output:**
-```json
-"John Doe"
-```
-
-### Example 14: Array Manipulation
-
-**Query:**
-```jfm
-let numbers = [1, 2, 3];
-numbers = push(numbers, 4);
-numbers = push(numbers, 5);
-numbers;
-```
-
-**Output:**
-```json
-[1, 2, 3, 4, 5]
-```
-
-### Example 15: Complex Data Transformation
-
-**Input JSON:**
-```json
-{
-  "products": [
-    {"name": "Laptop", "price": 999, "category": "Electronics"},
-    {"name": "Desk", "price": 299, "category": "Furniture"},
-    {"name": "Mouse", "price": 29, "category": "Electronics"}
-  ]
+root.users | {
+    "fullName": .firstName + " " + .lastName,
+    "isAdult": .age >= 18,
+    "status": if .age > 30 { "Senior" } else { "Junior" }
 }
 ```
 
-**Query:**
+### Working with Nested Data
+
 ```jfm
-let electronics = root.products | .category == "Electronics";
-let total = sum(electronics | .price);
-let count = count(electronics);
-{"count": count, "total": total, "average": total / count};
+// Extract nested values
+root.company.employees | .department.name
+
+// Optional chaining for missing fields
+root.user?.address?.city
 ```
 
-**Output:**
-```json
-{"count": 2, "total": 1028, "average": 514}
-```
+### Using Loops
 
-### Example 16: Using Range Operator
-
-**Query:**
 ```jfm
-let squares = [];
-for i in 1..10 {
-    squares += [i * i];
+let results = [];
+for user in root.users {
+    if user.active {
+        results = push(results, user.name);
+    }
 }
-squares;
+results
 ```
 
-**Output:**
-```json
-[1, 4, 9, 16, 25, 36, 49, 64, 81, 100]
-```
+### Custom Functions
 
-### Example 17: Optional Chaining
-
-**Input JSON:**
-```json
-{
-  "user": {
-    "name": "Alice"
-  }
+```jfm
+fn is_adult(user) {
+    return user.age >= 18;
 }
+
+fn format_name(user) {
+    return user.firstName + " " + user.lastName;
+}
+
+root.users | is_adult(.) | format_name(.)
 ```
 
-**Query:**
+### Modular Scripts
+
 ```jfm
-root.user?.missing?.field;  // Returns null instead of error
+// utils.jfm
+fn process(data) { data | .active == true | .name }
+
+// main query
+let result = include("utils.jfm");
+process(root.users)
 ```
-
-**Output:**
-```json
-null
-```
-
-### Example 18: Creating New Objects
-
-**Query:**
-```jfm
-root.users | {"fullName": .name, "isAdult": .age >= 18, "ageGroup": if .age > 30 { "Senior" } else { "Junior" }};
-```
-
-**Output:**
-```json
-[
-  {"fullName": "Bob", "isAdult": true, "ageGroup": "Junior"},
-  {"fullName": "Alice", "isAdult": true, "ageGroup": "Junior"},
-  {"fullName": "Charlie", "isAdult": true, "ageGroup": "Senior"}
-]
-```
-
-## Error Handling
-
-The tool will exit with an error code if:
-
-- JSON parsing fails
-- Query syntax is invalid
-- Runtime errors occur (e.g., division by zero, index out of bounds, undefined variables)
-- No query is entered in interactive mode
-- Empty or invalid input is provided via stdin
-
-Error messages are printed to stderr, while results are printed to stdout (or written to the output file if `--out` is specified). Error messages are colored by default when outputting to a TTY (unless `--color=never` is specified).
-
-Verbose mode (`-v` or `--verbose`) outputs additional debug information to stderr, including JSON parsing steps, query parsing steps, and execution details. This can help diagnose issues with queries or input data.
 
 ## Notes
 
-- The `root` variable contains the input JSON data
+- `root` contains the input JSON
 - Array indices are zero-based
-- All numbers are floating-point (64-bit)
+- Numbers are 64-bit floats
 - String comparisons are case-sensitive
-- The pipe operator (`|`) provides syntactic sugar for common filtering and mapping operations
-- Variables are scoped to blocks (blocks create new scopes)
-- The last expression's value is returned as the result
+- Last expression is the return value
+- Blocks create new variable scopes
 

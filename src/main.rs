@@ -309,7 +309,6 @@ fn execute_query(query_str: &str, root_value: &jfm::lexer::Value, out_file: &Opt
     }
 }
 
-/// Apply limit to array results, returning only the first N elements
 fn apply_limit(value: &jfm::lexer::Value, limit: Option<usize>) -> jfm::lexer::Value {
     use jfm::lexer::Value;
     
@@ -323,34 +322,41 @@ fn apply_limit(value: &jfm::lexer::Value, limit: Option<usize>) -> jfm::lexer::V
     }
 }
 
-/// Execute query in streaming mode - processes line-delimited JSON (NDJSON) or large JSON arrays
+fn write_output(output: &str, writer: &mut Option<std::fs::File>) {
+    if let Some(w) = writer {
+        let _ = w.write_all(output.as_bytes());
+    } else {
+        print!("{}", output);
+    }
+}
+
 fn execute_streaming(json_str: &str, query_str: &str, out_file: &Option<PathBuf>, config: &AppConfig) {
     use std::fs::OpenOptions;
     
     let mut output_count = 0usize;
     let limit = config.limit.unwrap_or(usize::MAX);
     
-    // Try to detect if it's NDJSON (newline-delimited JSON)
     let is_ndjson = json_str.lines().next().is_some_and(|first_line| {
         let trimmed = first_line.trim();
         !trimmed.is_empty() && !trimmed.starts_with('[')
     });
     
-    let mut out_writer: Option<std::fs::File> = if let Some(out_path) = out_file {
-        match OpenOptions::new()
+    let mut out_writer: Option<std::fs::File> = out_file.as_ref().map(|out_path| {
+        OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
             .open(out_path)
-        {
-            Ok(f) => Some(f),
-            Err(e) => {
+            .unwrap_or_else(|e| {
                 error_message(config, &format!("Error opening output file: {}", e));
                 std::process::exit(1);
-            }
-        }
-    } else {
-        None
+            })
+    });
+    
+    let process_result = |result: &jfm::lexer::Value, writer: &mut Option<std::fs::File>, count: &mut usize, compact: bool| {
+        let output = format!("{}\n", value_to_json_string(result, compact));
+        write_output(&output, writer);
+        *count += 1;
     };
     
     if is_ndjson {
@@ -371,31 +377,17 @@ fn execute_streaming(json_str: &str, query_str: &str, out_file: &Option<PathBuf>
                 Ok(json_val) => {
                     let root_value = convert_json_to_internal(json_val);
                     match interpreter::parse_and_run(query_str, root_value) {
-                        Ok(Some(result)) => {
-                            let output = format!("{}\n", value_to_json_string(&result, config.compact));
-                            
-                            if let Some(ref mut writer) = out_writer {
-                                let _ = writer.write_all(output.as_bytes());
-                            } else {
-                                print!("{}", output);
-                            }
-                            output_count += 1;
-                        }
+                        Ok(Some(result)) => process_result(&result, &mut out_writer, &mut output_count, config.compact),
                         Ok(None) => {}
-                        Err(e) => {
-                            error_message(config, &format!("Query error on line: {}", e));
-                        }
+                        Err(e) => error_message(config, &format!("Query error on line: {}", e)),
                     }
                 }
-                Err(e) => {
-                    error_message(config, &format!("JSON parse error on line: {}", e));
-                }
+                Err(e) => error_message(config, &format!("JSON parse error on line: {}", e)),
             }
         }
     } else {
         verbose_log(config, "Processing as JSON array stream");
         
-        // Parse as a single JSON and iterate if it's an array
         match json::parse_json(json_str) {
             Ok(serde_json::Value::Array(arr)) => {
                 for item in arr {
@@ -406,45 +398,20 @@ fn execute_streaming(json_str: &str, query_str: &str, out_file: &Option<PathBuf>
                     
                     let root_value = convert_json_to_internal(item);
                     match interpreter::parse_and_run(query_str, root_value) {
-                        Ok(Some(result)) => {
-                            let output = format!("{}\n", value_to_json_string(&result, config.compact));
-                            
-                            if let Some(ref mut writer) = out_writer {
-                                let _ = writer.write_all(output.as_bytes());
-                            } else {
-                                print!("{}", output);
-                            }
-                            output_count += 1;
-                        }
+                        Ok(Some(result)) => process_result(&result, &mut out_writer, &mut output_count, config.compact),
                         Ok(None) => {}
-                        Err(e) => {
-                            error_message(config, &format!("Query error on item: {}", e));
-                        }
+                        Err(e) => error_message(config, &format!("Query error on item: {}", e)),
                     }
                 }
             }
             Ok(json_val) => {
-                // Not an array, process as single item
                 let root_value = convert_json_to_internal(json_val);
                 match interpreter::parse_and_run(query_str, root_value) {
                     Ok(Some(result)) => {
                         let limited_result = apply_limit(&result, config.limit);
-                        let output = format!("{}\n", value_to_json_string(&limited_result, config.compact));
-                        
-                        if let Some(ref mut writer) = out_writer {
-                            let _ = writer.write_all(output.as_bytes());
-                        } else {
-                            print!("{}", output);
-                        }
+                        write_output(&format!("{}\n", value_to_json_string(&limited_result, config.compact)), &mut out_writer);
                     }
-                    Ok(None) => {
-                        let output = "{}\n";
-                        if let Some(ref mut writer) = out_writer {
-                            let _ = writer.write_all(output.as_bytes());
-                        } else {
-                            print!("{}", output);
-                        }
-                    }
+                    Ok(None) => write_output("{}\n", &mut out_writer),
                     Err(e) => {
                         error_message(config, &format!("Query error: {}", e));
                         std::process::exit(1);
@@ -503,153 +470,68 @@ fn convert_json_to_internal(json_val: serde_json::Value) -> jfm::lexer::Value {
 }
 
 fn value_to_json_string(val: &jfm::lexer::Value, compact: bool) -> String {
-    if compact {
-        value_to_json_string_compact(val)
-    } else {
-        value_to_json_string_with_indent(val, 0)
-    }
+    format_json(val, if compact { None } else { Some(0) })
 }
 
-fn value_to_json_string_compact(val: &jfm::lexer::Value) -> String {
-    use jfm::lexer::Value;
-
-    match val {
-        Value::Null => "null".to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Number(n) => {
-            if n.fract() == 0.0 {
-                format!("{:.0}", n)
-            } else {
-                n.to_string()
-            }
-        }
-        Value::String(s) => {
-            let escaped = s
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n")
-                .replace('\r', "\\r")
-                .replace('\t', "\\t");
-            format!("\"{}\"", escaped)
-        }
-        Value::Array(arr) => {
-            let items = arr.borrow();
-            if items.is_empty() {
-                return "[]".to_string();
-            }
-            
-            let elements: Vec<String> = items
-                .iter()
-                .map(|item| value_to_json_string_compact(item))
-                .collect();
-            
-            format!("[{}]", elements.join(","))
-        }
-        Value::Object(obj) => {
-            let map = obj.borrow();
-            if map.is_empty() {
-                return "{}".to_string();
-            }
-            
-            let fields: Vec<String> = map
-                .iter()
-                .map(|(k, v)| format!("\"{}\":{}", k, value_to_json_string_compact(v)))
-                .collect();
-            
-            format!("{{{}}}", fields.join(","))
-        }
-        Value::Function(_) => {
-            "\"<function>\"".to_string()
-        }
-    }
+fn escape_json_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
 }
 
-fn value_to_json_string_with_indent(val: &jfm::lexer::Value, indent: usize) -> String {
+fn format_json(val: &jfm::lexer::Value, indent: Option<usize>) -> String {
     use jfm::lexer::Value;
     const INDENT_SIZE: usize = 2;
-    let indent_str = " ".repeat(indent * INDENT_SIZE);
-    let next_indent_str = " ".repeat((indent + 1) * INDENT_SIZE);
 
     match val {
         Value::Null => "null".to_string(),
         Value::Bool(b) => b.to_string(),
-        Value::Number(n) => {
-            if n.fract() == 0.0 {
-                format!("{:.0}", n)
-            } else {
-                n.to_string()
-            }
-        }
-        Value::String(s) => {
-            let escaped = s
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n")
-                .replace('\r', "\\r")
-                .replace('\t', "\\t");
-            format!("\"{}\"", escaped)
-        }
+        Value::Number(n) => if n.fract() == 0.0 { format!("{:.0}", n) } else { n.to_string() },
+        Value::String(s) => format!("\"{}\"", escape_json_string(s)),
+        Value::Function(_) => "\"<function>\"".to_string(),
         Value::Array(arr) => {
             let items = arr.borrow();
             if items.is_empty() {
                 return "[]".to_string();
             }
-            
-            let elements: Vec<String> = items
-                .iter()
-                .map(|item| {
-                    let formatted = value_to_json_string_with_indent(item, indent + 1);
-                    formatted
-                        .lines()
-                        .map(|line| format!("{}{}", next_indent_str, line))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .collect();
-            
-            format!("[\n{}\n{}]", elements.join(",\n"), indent_str)
+            match indent {
+                None => {
+                    let elements: Vec<String> = items.iter().map(|item| format_json(item, None)).collect();
+                    format!("[{}]", elements.join(","))
+                }
+                Some(level) => {
+                    let indent_str = " ".repeat(level * INDENT_SIZE);
+                    let next_indent = " ".repeat((level + 1) * INDENT_SIZE);
+                    let elements: Vec<String> = items.iter()
+                        .map(|item| format!("{}{}", next_indent, format_json(item, Some(level + 1))))
+                        .collect();
+                    format!("[\n{}\n{}]", elements.join(",\n"), indent_str)
+                }
+            }
         }
         Value::Object(obj) => {
             let map = obj.borrow();
             if map.is_empty() {
                 return "{}".to_string();
             }
-            
-            let fields: Vec<String> = map
-                .iter()
-                .map(|(k, v)| {
-                    let value_str = value_to_json_string_with_indent(v, indent + 1);
-                    
-                    if value_str.contains('\n') {
-                        let mut lines: Vec<&str> = value_str.lines().collect();
-                        let first_line = lines.remove(0);
-                        let result = format!("\"{}\": {}", k, first_line);
-                        if lines.is_empty() {
-                            result
-                        } else {
-                            format!("{}\n{}", result, lines.join("\n"))
-                        }
-                    } else {
-                        format!("\"{}\": {}", k, value_str)
-                    }
-                })
-                .collect();
-            
-            let formatted_fields: Vec<String> = fields
-                .iter()
-                .map(|field| {
-                    field
-                        .lines()
-                        .map(|line| format!("{}{}", next_indent_str, line))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .collect();
-            
-            format!("{{\n{}\n{}}}", formatted_fields.join(",\n"), indent_str)
-        }
-        Value::Function(_) => {
-            "\"<function>\"".to_string()
+            match indent {
+                None => {
+                    let fields: Vec<String> = map.iter()
+                        .map(|(k, v)| format!("\"{}\":{}", k, format_json(v, None)))
+                        .collect();
+                    format!("{{{}}}", fields.join(","))
+                }
+                Some(level) => {
+                    let indent_str = " ".repeat(level * INDENT_SIZE);
+                    let next_indent = " ".repeat((level + 1) * INDENT_SIZE);
+                    let fields: Vec<String> = map.iter()
+                        .map(|(k, v)| format!("{}\"{}\": {}", next_indent, k, format_json(v, Some(level + 1))))
+                        .collect();
+                    format!("{{\n{}\n{}}}", fields.join(",\n"), indent_str)
+                }
+            }
         }
     }
 }
