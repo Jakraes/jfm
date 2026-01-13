@@ -56,6 +56,7 @@ Shell completions: `jfm complete bash|zsh|fish|powershell`
 ```jfm
 42, 3.14           // Numbers
 "hello"            // Strings
+`Hello ${name}!`   // Template literals
 true, false        // Booleans
 null               // Null
 [1, 2, 3]          // Arrays
@@ -90,6 +91,14 @@ root.items.length          // Array length
 
 // Logical
 && || !
+
+// Ternary (conditional)
+let status = age >= 18 ? "adult" : "minor";
+let grade = score > 90 ? "A" : score > 80 ? "B" : "C";
+
+// Null coalescing
+let name = user.nickname ?? user.name ?? "Anonymous";
+let config = settings?.theme ?? "default";
 
 // Compound assignment
 += -= *= /=
@@ -145,6 +154,35 @@ Filter and transform arrays:
 root.users | .age > 25           // Filter: users over 25
 root.users | .name               // Map: extract names
 root.users | .age > 25 | .name   // Chain: filter then map
+```
+
+### Template Literals
+
+String interpolation with backticks:
+
+```jfm
+// Basic interpolation
+let greeting = `Hello, ${user.name}!`;
+let info = `${user.name} is ${user.age} years old`;
+
+// Expressions in interpolation
+let summary = `Found ${count(items)} items totaling $${sum(items | .price)}`;
+let result = `Status: ${active ? "ON" : "OFF"}`;
+
+// Multi-line strings
+let html = `
+  <div>
+    <h1>${title}</h1>
+    <p>${content}</p>
+  </div>
+`;
+
+// Escape sequences
+`Line 1\nLine 2`           // Newline
+`Tab:\tvalue`              // Tab
+`Path: C:\\Users\\${name}` // Escaped backslash
+`Cost: \$100`              // Literal dollar sign
+`Say \`hello\``            // Escaped backtick
 ```
 
 ## Built-in Functions

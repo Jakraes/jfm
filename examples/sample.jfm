@@ -1,0 +1,177 @@
+// JFM Sample - Demonstrates all language features
+
+// Variables and data types
+let name = "Alice";
+let age = 30;
+let active = true;
+let score = 95.5;
+let nothing = null;
+
+// Arrays and objects
+let numbers = [1, 2, 3, 4, 5];
+let user = {
+    "name": "Bob",
+    "age": 25,
+    "email": "bob@example.com"
+};
+
+// Template literals with interpolation
+let greeting = `Hello, ${name}!`;
+let info = `${name} is ${age} years old`;
+let summary = `Found ${count(numbers)} items totaling ${sum(numbers)}`;
+
+// Ternary operator
+let status = age >= 18 ? "adult" : "minor";
+let grade = score > 90 ? "A" : score > 80 ? "B" : "C";
+
+// Null coalescing
+let nickname = user.nickname ?? user.name ?? "Anonymous";
+let theme = root?.settings?.theme ?? "default";
+
+// Optional chaining
+let city = root.user?.address?.city;
+let phone = user?.contact?.phone;
+
+// Arithmetic operators
+let sum_result = 10 + 5;
+let diff = 10 - 5;
+let product = 10 * 5;
+let quotient = 10 / 5;
+let remainder = 10 % 3;
+let power = 2 ^ 8;
+
+// Comparison operators
+let is_equal = age == 30;
+let not_equal = age != 25;
+let greater = age > 20;
+let less = age < 50;
+
+// Logical operators
+let both = active && score > 90;
+let either = active || score > 90;
+let negation = !active;
+
+// Range operator
+let range = 1..10;
+
+// Compound assignment
+let x = 10;
+x += 5;
+x -= 2;
+x *= 3;
+x /= 2;
+
+// Control flow - if/else
+if age >= 18 {
+    print("Adult");
+} else {
+    print("Minor");
+}
+
+// Control flow - for loop
+for num in numbers {
+    print(num);
+}
+
+for i in 1..5 {
+    if i == 3 { break; }
+    if i % 2 == 0 { continue; }
+    print(i);
+}
+
+// Control flow - while loop
+let counter = 0;
+while counter < 5 {
+    print(counter);
+    counter += 1;
+}
+
+// Functions
+fn add(a, b) {
+    return a + b;
+}
+
+fn factorial(n) {
+    if n <= 1 { return 1; }
+    return n * factorial(n - 1);
+}
+
+// Lambdas
+let double = x => x * 2;
+let multiply = (a, b) => a * b;
+
+// Pipe operator
+root.users | .age > 25;
+root.users | .name;
+root.users | .active == true | .name;
+
+// Built-in functions - Array
+count([1, 2, 3]);
+sum([1, 2, 3]);
+avg([1, 2, 3]);
+min([3, 1, 2]);
+max([1, 3, 2]);
+take([1, 2, 3, 4], 2);
+unique([1, 1, 2, 2, 3]);
+sort([3, 1, 2]);
+reverse([1, 2, 3]);
+first([1, 2, 3]);
+last([1, 2, 3]);
+
+// Built-in functions - String
+len("hello");
+trim("  hello  ");
+upper("hello");
+lower("HELLO");
+split("a,b,c", ",");
+join(["a", "b"], "-");
+contains("hello", "ell");
+starts_with("hello", "he");
+ends_with("hello", "lo");
+replace("hello", "l", "L");
+
+// Built-in functions - Object
+keys({"a": 1, "b": 2});
+values({"a": 1, "b": 2});
+entries({"a": 1});
+has({"a": 1}, "a");
+merge({"a": 1}, {"b": 2});
+
+// Built-in functions - Type checking
+typeof(42);
+is_null(null);
+is_array([]);
+is_object({});
+is_string("hi");
+is_number(42);
+is_bool(true);
+to_string(42);
+to_number("42");
+parse_json("[1,2,3]");
+
+// Built-in functions - Math
+floor(3.7);
+ceil(3.2);
+round(3.5);
+abs(-5);
+sqrt(16);
+pow(2, 8);
+sin(0);
+cos(0);
+tan(0);
+random();
+
+// Built-in functions - I/O
+print("Hello, World!");
+print(name, age, score);
+
+// Include external script
+// include("utils.jfm");
+
+// Final expression (return value)
+{
+    "name": name,
+    "age": age,
+    "status": status,
+    "greeting": greeting
+}

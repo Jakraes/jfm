@@ -1,0 +1,35 @@
+{
+    "name": "jfm-language",
+    "displayName": "JFM Language Support",
+    "description": "Syntax highlighting for JFM (JSON Query Language)",
+    "version": "1.0.0",
+    "publisher": "jfm",
+    "engines": {
+        "vscode": "^1.60.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "contributes": {
+        "languages": [
+            {
+                "id": "jfm",
+                "aliases": [
+                    "JFM",
+                    "jfm"
+                ],
+                "extensions": [
+                    ".jfm"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "jfm",
+                "scopeName": "source.jfm",
+                "path": "./syntaxes/jfm.tmLanguage.json"
+            }
+        ]
+    }
+}
