@@ -1,4 +1,4 @@
-use crate::lexer::{BinaryOp, Expr, ExprKind, Stmt, Token, UnaryOp, Value};
+use crate::lexer::{BinaryOp, Expr, ExprKind, Function, Stmt, Token, UnaryOp, Value};
 use super::environment::Environment;
 use super::error::InterpreterError;
 use super::control_flow::ControlFlow;
@@ -32,6 +32,9 @@ impl Interpreter {
                 ControlFlow::Return(val) => return Ok(Some(val)),
                 ControlFlow::Value(val) => last_val = Some(val),
                 ControlFlow::Next => last_val = None,
+                ControlFlow::Break | ControlFlow::Continue => {
+                    return Err(InterpreterError::InvalidOperation("break/continue outside loop".to_string()));
+                }
             }
         }
         Ok(last_val)
@@ -58,6 +61,10 @@ impl Interpreter {
                         ControlFlow::Return(val) => {
                             result = ControlFlow::Return(val);
                             break;
+                        }
+                        ControlFlow::Break | ControlFlow::Continue => {
+                            self.env = (*old_env).clone();
+                            return Ok(self.execute_stmt(s)?);
                         }
                         ControlFlow::Value(_) | ControlFlow::Next => {}
                     }
@@ -102,16 +109,82 @@ impl Interpreter {
                                 result = ControlFlow::Return(val);
                                 break;
                             }
+                            ControlFlow::Break => {
+                                self.env = (*old_env).clone();
+                                return Ok(ControlFlow::Next);
+                            }
+                            ControlFlow::Continue => {
+                                result = ControlFlow::Continue;
+                                break;
+                            }
                             ControlFlow::Value(_) | ControlFlow::Next => {}
                         }
                     }
 
                     self.env = (*old_env).clone();
-                    if let ControlFlow::Return(val) = result {
-                        return Ok(ControlFlow::Return(val));
+                    match result {
+                        ControlFlow::Return(val) => return Ok(ControlFlow::Return(val)),
+                        ControlFlow::Continue => continue,
+                        _ => {}
                     }
                 }
                 
+                Ok(ControlFlow::Next)
+            }
+            Stmt::While { condition, body } => {
+                loop {
+                    let cond_val = self.eval_expr(condition)?;
+                    let truthy = match cond_val {
+                        Value::Bool(b) => b,
+                        Value::Null => false,
+                        _ => true,
+                    };
+                    
+                    if !truthy {
+                        break;
+                    }
+                    
+                    let old_env = Rc::new(self.env.clone());
+                    self.env = Environment::with_parent(old_env.clone());
+                    
+                    let mut result = ControlFlow::Next;
+                    for s in body {
+                        match self.execute_stmt(s)? {
+                            ControlFlow::Return(val) => {
+                                result = ControlFlow::Return(val);
+                                break;
+                            }
+                            ControlFlow::Break => {
+                                self.env = (*old_env).clone();
+                                return Ok(ControlFlow::Next);
+                            }
+                            ControlFlow::Continue => {
+                                result = ControlFlow::Continue;
+                                break;
+                            }
+                            ControlFlow::Value(_) | ControlFlow::Next => {}
+                        }
+                    }
+                    
+                    self.env = (*old_env).clone();
+                    match result {
+                        ControlFlow::Return(val) => return Ok(ControlFlow::Return(val)),
+                        ControlFlow::Continue => continue,
+                        _ => {}
+                    }
+                }
+                
+                Ok(ControlFlow::Next)
+            }
+            Stmt::Break => Ok(ControlFlow::Break),
+            Stmt::Continue => Ok(ControlFlow::Continue),
+            Stmt::Function { name, params, body } => {
+                let func = Function {
+                    params: params.clone(),
+                    body_expr: None,
+                    body_stmts: Some(body.clone()),
+                };
+                self.env.set(name.to_string(), Value::Function(Rc::new(func)));
                 Ok(ControlFlow::Next)
             }
             Stmt::Return(expr) => {
@@ -188,8 +261,13 @@ impl Interpreter {
                 Ok(Value::Object(Rc::new(RefCell::new(map))))
             }
 
-            ExprKind::Lambda { params: _, body: _ } => {
-                Err(InterpreterError::InvalidOperation("Lambdas not fully implemented in evaluation yet".to_string()))
+            ExprKind::Lambda { params, body } => {
+                let func = Function {
+                    params: params.clone(),
+                    body_expr: Some(body.clone()),
+                    body_stmts: None,
+                };
+                Ok(Value::Function(Rc::new(func)))
             }
 
             ExprKind::Call { name, args } => {
@@ -197,6 +275,13 @@ impl Interpreter {
                 for a in args {
                     arg_vals.push(self.eval_expr(a)?);
                 }
+                
+                if let Some(func_val) = self.env.get(name.as_ref()) {
+                    if let Value::Function(func) = func_val {
+                        return self.call_user_function(&func, arg_vals);
+                    }
+                }
+                
                 self.call_function(name, arg_vals)
             }
 
@@ -326,6 +411,48 @@ impl Interpreter {
             "include" => self.builtin_include(&args),
             _ => Err(InterpreterError::InvalidOperation(format!("Unknown function: {}", name))),
         }
+    }
+
+    fn call_user_function(&mut self, func: &Function, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if func.params.len() != args.len() {
+            return Err(InterpreterError::InvalidOperation(format!(
+                "Function expects {} arguments, got {}",
+                func.params.len(),
+                args.len()
+            )));
+        }
+
+        let old_env = Rc::new(self.env.clone());
+        self.env = Environment::with_parent(old_env.clone());
+
+        for (param, arg) in func.params.iter().zip(args.iter()) {
+            self.env.set(param.to_string(), arg.clone());
+        }
+
+        let result = if let Some(ref body_expr) = func.body_expr {
+            self.eval_expr(body_expr)?
+        } else if let Some(ref body_stmts) = func.body_stmts {
+            let mut last_val = Value::Null;
+            for stmt in body_stmts {
+                match self.execute_stmt(stmt)? {
+                    ControlFlow::Return(val) => {
+                        self.env = (*old_env).clone();
+                        return Ok(val);
+                    }
+                    ControlFlow::Value(val) => last_val = val,
+                    ControlFlow::Next => {}
+                    ControlFlow::Break | ControlFlow::Continue => {
+                        return Err(InterpreterError::InvalidOperation("break/continue outside loop".to_string()));
+                    }
+                }
+            }
+            last_val
+        } else {
+            return Err(InterpreterError::InvalidOperation("Function has no body".to_string()));
+        };
+
+        self.env = (*old_env).clone();
+        Ok(result)
     }
 
     fn builtin_include(&mut self, args: &[Value]) -> Result<Value, InterpreterError> {
@@ -531,6 +658,7 @@ impl Interpreter {
                     .collect();
                 format!("{{{}}}", fields.join(", "))
             }
+            Value::Function(_) => "<function>".to_string(),
         }
     }
 

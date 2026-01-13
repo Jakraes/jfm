@@ -276,5 +276,8 @@ fn value_to_json_string_with_indent(val: &jfm::lexer::Value, indent: usize) -> S
             
             format!("{{\n{}\n{}}}", formatted_fields.join(",\n"), indent_str)
         }
+        Value::Function(_) => {
+            "\"<function>\"".to_string()
+        }
     }
 }

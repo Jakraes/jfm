@@ -13,6 +13,10 @@ pub enum Token {
     If,
     Else,
     Return,
+    While,
+    Break,
+    Continue,
+    Fn,
 
     Ident(String),
     Number(f64),
@@ -67,6 +71,7 @@ pub enum Value {
     String(Rc<str>),
     Array(Rc<RefCell<Vec<Value>>>),
     Object(Rc<RefCell<IndexMap<String, Value>>>),
+    Function(Rc<Function>),
 }
 
 impl PartialEq for Value {
@@ -78,6 +83,7 @@ impl PartialEq for Value {
             (Value::String(s1), Value::String(s2)) => s1 == s2,
             (Value::Array(a1), Value::Array(a2)) => a1 == a2,
             (Value::Object(o1), Value::Object(o2)) => o1 == o2,
+            (Value::Function(f1), Value::Function(f2)) => Rc::ptr_eq(f1, f2),
             _ => false,
         }
     }
@@ -161,9 +167,20 @@ pub enum Stmt {
     Let { name: Rc<str>, value: Expr },
     Expr(Expr),
     For { var: Rc<str>, iterable: Expr, body: Vec<Stmt> },
+    While { condition: Expr, body: Vec<Stmt> },
     If { condition: Expr, then_branch: Vec<Stmt>, else_branch: Option<Vec<Stmt>> },
     Return(Option<Expr>),
+    Break,
+    Continue,
+    Function { name: Rc<str>, params: Vec<Rc<str>>, body: Vec<Stmt> },
     Block(Vec<Stmt>),
+}
+
+#[derive(Debug, Clone)]
+pub struct Function {
+    pub params: Vec<Rc<str>>,
+    pub body_expr: Option<Box<Expr>>,
+    pub body_stmts: Option<Vec<Stmt>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -255,6 +272,10 @@ pub fn lexer<'a>()
         "if" => Token::If,
         "else" => Token::Else,
         "return" => Token::Return,
+        "while" => Token::While,
+        "break" => Token::Break,
+        "continue" => Token::Continue,
+        "fn" => Token::Fn,
         "true" => Token::True,
         "false" => Token::False,
         "null" => Token::Null,

@@ -318,6 +318,61 @@ for e in root.employees {
 root.employees;
 ```
 
+#### While Loops
+
+Iterate while a condition is true:
+
+```jfm
+let x = 0;
+while x < 10 {
+    x = x + 1;
+}
+x;
+```
+
+While loops can be used for complex iteration patterns:
+
+```jfm
+let sum = 0;
+let i = 0;
+let arr = [1, 2, 3, 4, 5];
+while i < arr.length {
+    sum = sum + arr[i];
+    i = i + 1;
+}
+sum;
+```
+
+#### Break and Continue
+
+Exit loops early with `break`:
+
+```jfm
+let x = 0;
+while true {
+    x = x + 1;
+    if x >= 5 {
+        break;
+    }
+}
+x;
+```
+
+Skip to the next iteration with `continue`:
+
+```jfm
+let sum = 0;
+for x in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] {
+    if x % 2 == 0 {
+        continue;
+    }
+    sum = sum + x;
+}
+sum;
+```
+
+Both `break` and `continue` work in `for` and `while` loops.
+
 #### Blocks
 
 Code blocks create new scopes:
@@ -339,6 +394,77 @@ if condition {
 }
 // Continue execution...
 ```
+
+#### Lambda Functions
+
+Create anonymous functions:
+
+```jfm
+let double = x => x * 2;
+double(5);
+```
+
+Multiple parameters:
+
+```jfm
+let add = (x, y) => x + y;
+add(3, 4);
+```
+
+No parameters:
+
+```jfm
+let get_five = () => 5;
+get_five();
+```
+
+Lambdas can be assigned to variables and called like regular functions. They capture variables from their surrounding scope.
+
+#### User-Defined Functions
+
+Define named functions with the `fn` keyword:
+
+```jfm
+fn add(x, y) {
+    return x + y;
+}
+add(5, 3);
+```
+
+Functions can have multiple statements:
+
+```jfm
+fn multiply(x, y) {
+    let result = x * y;
+    return result;
+}
+multiply(4, 7);
+```
+
+Functions return values through `return` statements, or the last expression if no `return` is used:
+
+```jfm
+fn get_ten() {
+    let x = 10;
+    x;
+}
+get_ten();
+```
+
+Functions can call other functions and support recursion:
+
+```jfm
+fn factorial(n) {
+    if n <= 1 {
+        return 1;
+    } else {
+        return n * factorial(n - 1);
+    }
+}
+factorial(5);
+```
+
+Functions can use conditionals, loops, and all other language features in their bodies.
 
 ### Built-in Functions
 

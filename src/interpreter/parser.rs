@@ -49,8 +49,20 @@ impl TokenParser {
         match self.current_token() {
             Some(Token::Let) => self.parse_let_statement(),
             Some(Token::For) => self.parse_for_statement(),
+            Some(Token::While) => self.parse_while_statement(),
             Some(Token::If) => self.parse_if_statement(),
             Some(Token::Return) => self.parse_return_statement(),
+            Some(Token::Break) => {
+                self.advance();
+                self.expect(Token::Semicolon)?;
+                Ok(Stmt::Break)
+            }
+            Some(Token::Continue) => {
+                self.advance();
+                self.expect(Token::Semicolon)?;
+                Ok(Stmt::Continue)
+            }
+            Some(Token::Fn) => self.parse_function_statement(),
             Some(Token::LBrace) => {
                 let block = self.parse_block()?;
                 Ok(Stmt::Block(block))
@@ -83,6 +95,40 @@ impl TokenParser {
         let iterable = self.parse_expression()?;
         let body = self.parse_block()?;
         Ok(Stmt::For { var, iterable, body })
+    }
+
+    fn parse_while_statement(&mut self) -> Result<Stmt, String> {
+        self.expect(Token::While)?;
+        let condition = self.parse_expression()?;
+        let body = self.parse_block()?;
+        Ok(Stmt::While { condition, body })
+    }
+
+    fn parse_function_statement(&mut self) -> Result<Stmt, String> {
+        self.expect(Token::Fn)?;
+        let name = match self.advance() {
+            Some(Token::Ident(n)) => Rc::from(n.as_str()),
+            other => return Err(format!("Expected function name, found {:?}", other)),
+        };
+        self.expect(Token::LParen)?;
+        let mut params = Vec::new();
+        if !matches!(self.current_token(), Some(Token::RParen)) {
+            loop {
+                let param = match self.advance() {
+                    Some(Token::Ident(n)) => Rc::from(n.as_str()),
+                    other => return Err(format!("Expected parameter name, found {:?}", other)),
+                };
+                params.push(param);
+                if matches!(self.current_token(), Some(Token::Comma)) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect(Token::RParen)?;
+        let body = self.parse_block()?;
+        Ok(Stmt::Function { name, params, body })
     }
 
     fn parse_if_statement(&mut self) -> Result<Stmt, String> {
@@ -181,34 +227,70 @@ impl TokenParser {
     }
 
     fn parse_lambda(&mut self) -> Result<Expr, String> {
-        if matches!(self.current_token(), Some(Token::LParen)) {
-        }
-
-        let expr = self.parse_pipe()?;
-
-        if matches!(self.current_token(), Some(Token::Arrow)) {
+        let saved_current = self.current;
+        
+        let params = if matches!(self.current_token(), Some(Token::LParen)) {
             self.advance();
-            let body = self.parse_expression()?;
-            let span = SimpleSpan::new((), 0..0);
+            let mut parsed_params = Vec::new();
+            if !matches!(self.current_token(), Some(Token::RParen)) {
+                loop {
+                    let param = match self.advance() {
+                        Some(Token::Ident(n)) => Rc::from(n.as_str()),
+                        _ => {
+                            self.current = saved_current;
+                            return self.parse_pipe();
+                        }
+                    };
+                    parsed_params.push(param);
+                    if matches!(self.current_token(), Some(Token::Comma)) {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            if !matches!(self.current_token(), Some(Token::RParen)) {
+                self.current = saved_current;
+                return self.parse_pipe();
+            }
+            self.advance();
             
-            let params = match expr.kind {
-                ExprKind::Identifier(name) => vec![name],
-                ExprKind::Grouped(inner) => match inner.kind {
-                     _ => return Err("Invalid lambda parameters".to_string()),
-                },
-                _ => return Err("Invalid lambda parameters".to_string()),
+            if matches!(self.current_token(), Some(Token::Arrow)) {
+                parsed_params
+            } else {
+                self.current = saved_current;
+                return self.parse_pipe();
+            }
+        } else if let Some(Token::Ident(_)) = self.current_token() {
+            let param_name = match self.advance() {
+                Some(Token::Ident(n)) => Rc::from(n.as_str()),
+                _ => {
+                    self.current = saved_current;
+                    return self.parse_pipe();
+                }
             };
-
-            return Ok(Expr {
-                kind: ExprKind::Lambda {
-                    params,
-                    body: Box::new(body),
-                },
-                span,
-            });
-        }
-
-        Ok(expr)
+            
+            if matches!(self.current_token(), Some(Token::Arrow)) {
+                vec![param_name]
+            } else {
+                self.current = saved_current;
+                return self.parse_pipe();
+            }
+        } else {
+            return self.parse_pipe();
+        };
+        
+        self.advance();
+        let body = self.parse_expression()?;
+        let span = SimpleSpan::new((), 0..0);
+        
+        Ok(Expr {
+            kind: ExprKind::Lambda {
+                params,
+                body: Box::new(body),
+            },
+            span,
+        })
     }
 
     fn parse_pipe(&mut self) -> Result<Expr, String> {

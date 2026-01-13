@@ -45,7 +45,7 @@ fn to_hashable(value: &Value) -> Option<HashableValue> {
         Value::Bool(b) => Some(HashableValue::Bool(*b)),
         Value::Number(n) => Some(HashableValue::Number(n.to_bits())),
         Value::String(s) => Some(HashableValue::String(s.clone())),
-        Value::Array(_) | Value::Object(_) => None,
+        Value::Array(_) | Value::Object(_) | Value::Function(_) => None,
     }
 }
 
