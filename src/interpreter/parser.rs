@@ -1,5 +1,5 @@
 use crate::diagnostic::{Diagnostic, Label, Span};
-use crate::lexer::{BinaryOp, Expr, ExprKind, MatchPattern, Stmt, Token, UnaryOp, Value};
+use crate::lexer::{ArrayElement, BinaryOp, Expr, ExprKind, MatchPattern, ObjectEntry, Stmt, Token, UnaryOp, Value};
 use chumsky::Parser as _;
 use std::rc::Rc;
 
@@ -849,9 +849,26 @@ impl TokenParser {
             Token::LBracket => {
                 let start_span = span;
                 let mut elements = Vec::new();
+                let mut has_spread = false;
                 if !matches!(self.current_token(), Some(Token::RBracket)) {
                     loop {
-                        elements.push(self.parse_expression()?);
+                        // Check for spread operator
+                        if matches!(self.current_token(), Some(Token::DotDot)) {
+                            self.advance(); // consume first dot
+                            // DotDot is ".." so we need one more "."
+                            if !matches!(self.current_token(), Some(Token::Dot)) {
+                                return Err(ParseError::new(
+                                    "expected '...' for spread operator",
+                                    self.current_span(),
+                                ));
+                            }
+                            self.advance(); // consume the third dot
+                            let spread_expr = self.parse_expression()?;
+                            elements.push(ArrayElement::Spread(spread_expr));
+                            has_spread = true;
+                        } else {
+                            elements.push(ArrayElement::Single(self.parse_expression()?));
+                        }
                         if matches!(self.current_token(), Some(Token::Comma)) {
                             self.advance();
                         } else {
@@ -860,31 +877,60 @@ impl TokenParser {
                     }
                 }
                 let end_span = self.expect(Token::RBracket)?;
-                Ok(Expr {
-                    kind: ExprKind::Array { elements },
-                    span: start_span.merge(end_span),
-                })
+                if has_spread {
+                    Ok(Expr {
+                        kind: ExprKind::ArrayWithSpread { elements },
+                        span: start_span.merge(end_span),
+                    })
+                } else {
+                    // Convert back to simple array
+                    let simple_elements: Vec<Expr> = elements.into_iter().map(|e| match e {
+                        ArrayElement::Single(expr) => expr,
+                        ArrayElement::Spread(_) => unreachable!(),
+                    }).collect();
+                    Ok(Expr {
+                        kind: ExprKind::Array { elements: simple_elements },
+                        span: start_span.merge(end_span),
+                    })
+                }
             }
             Token::LBrace => {
                 let start_span = span;
-                let mut fields = Vec::new();
+                let mut entries = Vec::new();
+                let mut has_spread = false;
                 if !matches!(self.current_token(), Some(Token::RBrace)) {
                     loop {
-                        let key = match self.advance() {
-                            Some(SpannedToken { token: Token::Ident(key_name), .. }) => key_name,
-                            Some(SpannedToken { token: Token::String(key_name), .. }) => key_name,
-                            other => {
-                                let err_span =
-                                    other.map(|st| st.span).unwrap_or(self.current_span());
+                        // Check for spread operator
+                        if matches!(self.current_token(), Some(Token::DotDot)) {
+                            self.advance(); // consume ".."
+                            // DotDot is ".." so we need one more "."
+                            if !matches!(self.current_token(), Some(Token::Dot)) {
                                 return Err(ParseError::new(
-                                    "expected identifier or string for object key",
-                                    err_span,
+                                    "expected '...' for spread operator",
+                                    self.current_span(),
                                 ));
                             }
-                        };
-                        self.expect(Token::Colon)?;
-                        let value = self.parse_expression()?;
-                        fields.push((key, value));
+                            self.advance(); // consume the third dot
+                            let spread_expr = self.parse_expression()?;
+                            entries.push(ObjectEntry::Spread(spread_expr));
+                            has_spread = true;
+                        } else {
+                            let key = match self.advance() {
+                                Some(SpannedToken { token: Token::Ident(key_name), .. }) => key_name,
+                                Some(SpannedToken { token: Token::String(key_name), .. }) => key_name,
+                                other => {
+                                    let err_span =
+                                        other.map(|st| st.span).unwrap_or(self.current_span());
+                                    return Err(ParseError::new(
+                                        "expected identifier or string for object key",
+                                        err_span,
+                                    ));
+                                }
+                            };
+                            self.expect(Token::Colon)?;
+                            let value = self.parse_expression()?;
+                            entries.push(ObjectEntry::Field { key, value });
+                        }
                         if matches!(self.current_token(), Some(Token::Comma)) {
                             self.advance();
                         } else {
@@ -893,10 +939,22 @@ impl TokenParser {
                     }
                 }
                 let end_span = self.expect(Token::RBrace)?;
-                Ok(Expr {
-                    kind: ExprKind::Object { fields },
-                    span: start_span.merge(end_span),
-                })
+                if has_spread {
+                    Ok(Expr {
+                        kind: ExprKind::ObjectWithSpread { entries },
+                        span: start_span.merge(end_span),
+                    })
+                } else {
+                    // Convert back to simple object
+                    let fields: Vec<(String, Expr)> = entries.into_iter().map(|e| match e {
+                        ObjectEntry::Field { key, value } => (key, value),
+                        ObjectEntry::Spread(_) => unreachable!(),
+                    }).collect();
+                    Ok(Expr {
+                        kind: ExprKind::Object { fields },
+                        span: start_span.merge(end_span),
+                    })
+                }
             }
             Token::Dot => {
                 let field_span = self.current_span();

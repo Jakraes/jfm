@@ -1,4 +1,4 @@
-use crate::lexer::{BinaryOp, Expr, ExprKind, Function, Stmt, UnaryOp, Value};
+use crate::lexer::{ArrayElement, BinaryOp, Expr, ExprKind, Function, ObjectEntry, Stmt, UnaryOp, Value};
 use super::environment::Environment;
 use super::error::InterpreterError;
 use super::control_flow::ControlFlow;
@@ -253,12 +253,60 @@ impl Interpreter {
                 Ok(Value::Array(Rc::new(RefCell::new(vals))))
             }
 
+            ExprKind::ArrayWithSpread { elements } => {
+                let mut vals = Vec::new();
+                for elem in elements {
+                    match elem {
+                        ArrayElement::Single(e) => {
+                            vals.push(self.eval_expr(e)?);
+                        }
+                        ArrayElement::Spread(e) => {
+                            let spread_val = self.eval_expr(e)?;
+                            match spread_val {
+                                Value::Array(arr) => {
+                                    vals.extend(arr.borrow().iter().cloned());
+                                }
+                                _ => return Err(InterpreterError::type_error("Spread requires an array")),
+                            }
+                        }
+                    }
+                }
+                Ok(Value::Array(Rc::new(RefCell::new(vals))))
+            }
+
             ExprKind::Object { fields } => {
                 let mut map = indexmap::IndexMap::new();
                 for (k, v) in fields {
                     map.insert(k.clone(), self.eval_expr(v)?);
                 }
                 Ok(Value::Object(Rc::new(RefCell::new(map))))
+            }
+
+            ExprKind::ObjectWithSpread { entries } => {
+                let mut map = indexmap::IndexMap::new();
+                for entry in entries {
+                    match entry {
+                        ObjectEntry::Field { key, value } => {
+                            map.insert(key.clone(), self.eval_expr(value)?);
+                        }
+                        ObjectEntry::Spread(e) => {
+                            let spread_val = self.eval_expr(e)?;
+                            match spread_val {
+                                Value::Object(obj) => {
+                                    for (k, v) in obj.borrow().iter() {
+                                        map.insert(k.clone(), v.clone());
+                                    }
+                                }
+                                _ => return Err(InterpreterError::type_error("Spread in object requires an object")),
+                            }
+                        }
+                    }
+                }
+                Ok(Value::Object(Rc::new(RefCell::new(map))))
+            }
+
+            ExprKind::Spread(_) => {
+                Err(InterpreterError::invalid_operation("Spread operator can only be used inside arrays or objects"))
             }
 
             ExprKind::Lambda { params, body } => {
@@ -480,7 +528,7 @@ impl Interpreter {
     }
 
     fn call_function(&mut self, name: &str, args: Vec<Value>) -> Result<Value, InterpreterError> {
-        if matches!(name, "map" | "filter" | "find" | "find_index" | "reduce" | "every" | "some") {
+        if matches!(name, "map" | "filter" | "find" | "find_index" | "reduce" | "every" | "some" | "replicate") {
             return match name {
                 "map" => builtins::builtin_map(&args, |func, call_args| self.call_function_value(func, call_args)),
                 "filter" => builtins::builtin_filter(&args, |func, call_args| self.call_function_value(func, call_args)),
@@ -489,6 +537,7 @@ impl Interpreter {
                 "reduce" => builtins::builtin_reduce(&args, |func, call_args| self.call_function_value(func, call_args)),
                 "every" => builtins::builtin_every(&args, |func, call_args| self.call_function_value(func, call_args)),
                 "some" => builtins::builtin_some(&args, |func, call_args| self.call_function_value(func, call_args)),
+                "replicate" => builtins::builtin_replicate(&args, |func, call_args| self.call_function_value(func, call_args)),
                 _ => unreachable!(),
             };
         }
@@ -508,6 +557,12 @@ impl Interpreter {
             "group_by" => builtins::builtin_group_by(&args, |v, f| self.get_field(v, f)),
             "include" => self.builtin_include(&args),
             "reverse" => builtins::builtin_reverse(&args),
+            "enumerate" => builtins::builtin_enumerate(&args),
+            "range" => builtins::builtin_range_fn(&args),
+            "deep_merge" => builtins::builtin_deep_merge(&args),
+            "cross" => builtins::builtin_cross(&args),
+            "set_path" => builtins::builtin_set_path(&args),
+            "clone" => builtins::builtin_clone(&args),
             "sort" => builtins::builtin_sort(&args),
             "slice" => builtins::builtin_slice(&args),
             "pop" => builtins::builtin_pop(&args),

@@ -162,6 +162,18 @@ pub enum UnaryOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum ArrayElement {
+    Single(Expr),
+    Spread(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ObjectEntry {
+    Field { key: String, value: Expr },
+    Spread(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
@@ -224,9 +236,16 @@ pub enum ExprKind {
     Object {
         fields: Vec<(String, Expr)>,
     },
+    ObjectWithSpread {
+        entries: Vec<ObjectEntry>,
+    },
     Array {
         elements: Vec<Expr>,
     },
+    ArrayWithSpread {
+        elements: Vec<ArrayElement>,
+    },
+    Spread(Box<Expr>),
     Lambda {
         params: Vec<Rc<str>>,
         body: Box<Expr>,

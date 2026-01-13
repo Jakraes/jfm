@@ -746,3 +746,193 @@ pub fn builtin_random(_args: &[Value]) -> Result<Value, InterpreterError> {
     Ok(Value::Number(rand::thread_rng().r#gen::<f64>(), true))
 }
 
+// ============ GENERATOR FUNCTIONS ============
+
+pub fn builtin_replicate(
+    args: &[Value],
+    mut call_fn: impl FnMut(&Value, &[Value]) -> Result<Value, InterpreterError>,
+) -> Result<Value, InterpreterError> {
+    require_args!(args, 2, "replicate");
+    if let (Value::Number(count, _), Value::Function(_)) = (&args[0], &args[1]) {
+        let n = *count as usize;
+        let mut result = Vec::with_capacity(n);
+        for i in 0..n {
+            result.push(call_fn(&args[1], &[Value::Number(i as f64, false)])?);
+        }
+        Ok(Value::Array(Rc::new(RefCell::new(result))))
+    } else {
+        Err(InterpreterError::type_error("replicate requires count and function"))
+    }
+}
+
+pub fn builtin_enumerate(args: &[Value]) -> Result<Value, InterpreterError> {
+    require_args!(args, 1, "enumerate");
+    with_array!(args, "enumerate", |arr: &Rc<RefCell<Vec<Value>>>| {
+        let items = arr.borrow();
+        let result: Vec<Value> = items.iter().enumerate()
+            .map(|(i, v)| Value::Array(Rc::new(RefCell::new(vec![
+                Value::Number(i as f64, false),
+                v.clone()
+            ]))))
+            .collect();
+        Ok(Value::Array(Rc::new(RefCell::new(result))))
+    })
+}
+
+pub fn builtin_range_fn(args: &[Value]) -> Result<Value, InterpreterError> {
+    require_args!(args, 2, "range");
+    let start = match &args[0] {
+        Value::Number(n, _) => *n,
+        _ => return Err(InterpreterError::type_error("range requires numbers")),
+    };
+    let end = match &args[1] {
+        Value::Number(n, _) => *n,
+        _ => return Err(InterpreterError::type_error("range requires numbers")),
+    };
+    let step = if args.len() > 2 {
+        match &args[2] {
+            Value::Number(n, _) => *n,
+            _ => return Err(InterpreterError::type_error("range step must be a number")),
+        }
+    } else if start <= end { 1.0 } else { -1.0 };
+
+    if step == 0.0 {
+        return Err(InterpreterError::invalid_operation("range step cannot be zero"));
+    }
+
+    let mut result = Vec::new();
+    let mut current = start;
+    
+    if step > 0.0 {
+        while current <= end + f64::EPSILON {
+            result.push(Value::Number(current, current.fract() != 0.0));
+            current += step;
+        }
+    } else {
+        while current >= end - f64::EPSILON {
+            result.push(Value::Number(current, current.fract() != 0.0));
+            current += step;
+        }
+    }
+    
+    Ok(Value::Array(Rc::new(RefCell::new(result))))
+}
+
+pub fn builtin_deep_merge(args: &[Value]) -> Result<Value, InterpreterError> {
+    require_args!(args, 2, "deep_merge");
+    
+    fn deep_merge_impl(base: &Value, overlay: &Value) -> Value {
+        match (base, overlay) {
+            (Value::Object(base_obj), Value::Object(overlay_obj)) => {
+                let mut result = base_obj.borrow().clone();
+                for (key, overlay_val) in overlay_obj.borrow().iter() {
+                    if let Some(base_val) = result.get(key).cloned() {
+                        result.insert(key.clone(), deep_merge_impl(&base_val, overlay_val));
+                    } else {
+                        result.insert(key.clone(), overlay_val.clone());
+                    }
+                }
+                Value::Object(Rc::new(RefCell::new(result)))
+            }
+            (_, overlay) => overlay.clone(),
+        }
+    }
+    
+    Ok(deep_merge_impl(&args[0], &args[1]))
+}
+
+pub fn builtin_cross(args: &[Value]) -> Result<Value, InterpreterError> {
+    if args.is_empty() {
+        return Err(InterpreterError::invalid_operation("cross requires at least one array"));
+    }
+    
+    let arrays: Vec<Vec<Value>> = args.iter()
+        .map(|arg| match arg {
+            Value::Array(arr) => Ok(arr.borrow().clone()),
+            _ => Err(InterpreterError::type_error("cross requires arrays")),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    
+    if arrays.iter().any(|a| a.is_empty()) {
+        return Ok(Value::Array(Rc::new(RefCell::new(vec![]))));
+    }
+    
+    let mut result: Vec<Vec<Value>> = vec![vec![]];
+    
+    for array in &arrays {
+        let mut new_result = Vec::new();
+        for combo in &result {
+            for item in array {
+                let mut new_combo = combo.clone();
+                new_combo.push(item.clone());
+                new_result.push(new_combo);
+            }
+        }
+        result = new_result;
+    }
+    
+    let final_result: Vec<Value> = result.into_iter()
+        .map(|combo| Value::Array(Rc::new(RefCell::new(combo))))
+        .collect();
+    
+    Ok(Value::Array(Rc::new(RefCell::new(final_result))))
+}
+
+pub fn builtin_set_path(args: &[Value]) -> Result<Value, InterpreterError> {
+    require_args!(args, 3, "set_path");
+    
+    let path = match &args[1] {
+        Value::String(s) => s.as_ref(),
+        _ => return Err(InterpreterError::type_error("set_path requires string path")),
+    };
+    
+    let parts: Vec<&str> = path.split('.').collect();
+    
+    fn set_recursive(obj: &Value, parts: &[&str], value: &Value) -> Value {
+        if parts.is_empty() {
+            return value.clone();
+        }
+        
+        let key = parts[0];
+        let remaining = &parts[1..];
+        
+        match obj {
+            Value::Object(map_rc) => {
+                let mut map = map_rc.borrow().clone();
+                let inner = map.get(key).cloned().unwrap_or(Value::Object(Rc::new(RefCell::new(IndexMap::new()))));
+                map.insert(key.to_string(), set_recursive(&inner, remaining, value));
+                Value::Object(Rc::new(RefCell::new(map)))
+            }
+            _ => {
+                let mut map = IndexMap::new();
+                let inner = Value::Object(Rc::new(RefCell::new(IndexMap::new())));
+                map.insert(key.to_string(), set_recursive(&inner, remaining, value));
+                Value::Object(Rc::new(RefCell::new(map)))
+            }
+        }
+    }
+    
+    Ok(set_recursive(&args[0], &parts, &args[2]))
+}
+
+pub fn builtin_clone(args: &[Value]) -> Result<Value, InterpreterError> {
+    require_args!(args, 1, "clone");
+    
+    fn deep_clone(value: &Value) -> Value {
+        match value {
+            Value::Array(arr) => {
+                let cloned: Vec<Value> = arr.borrow().iter().map(deep_clone).collect();
+                Value::Array(Rc::new(RefCell::new(cloned)))
+            }
+            Value::Object(obj) => {
+                let cloned: IndexMap<String, Value> = obj.borrow().iter()
+                    .map(|(k, v)| (k.clone(), deep_clone(v)))
+                    .collect();
+                Value::Object(Rc::new(RefCell::new(cloned)))
+            }
+            other => other.clone(),
+        }
+    }
+    
+    Ok(deep_clone(&args[0]))
+}

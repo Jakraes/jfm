@@ -228,6 +228,10 @@ let html = `
 | `every(arr, fn)` | All match? | `every([2,4], x => x % 2 == 0)` → true |
 | `some(arr, fn)` | Any match? | `some([1,2], x => x > 1)` → true |
 | `reduce(arr, fn, init)` | Reduce | `reduce([1,2,3], (a,v) => a+v, 0)` → 6 |
+| `map(arr, fn)` | Transform each | `map([1,2,3], x => x * 2)` → [2,4,6] |
+| `filter(arr, fn)` | Keep matches | `filter([1,2,3], x => x > 1)` → [2,3] |
+| `enumerate(arr)` | Index-value pairs | `enumerate(["a","b"])` → [[0,"a"],[1,"b"]] |
+| `clone(arr)` | Deep copy | `clone([1,[2,3]])` → new array |
 
 ### String
 
@@ -253,6 +257,9 @@ let html = `
 | `entries(obj)` | Key-value pairs | `entries({"a":1})` → [["a",1]] |
 | `has(obj, key)` | Has key? | `has({"a":1}, "a")` → true |
 | `merge(o1, o2)` | Merge objects | `merge({"a":1}, {"b":2})` |
+| `deep_merge(o1, o2)` | Deep merge | `deep_merge({a:{x:1}}, {a:{y:2}})` |
+| `set_path(obj, path, val)` | Set nested path | `set_path({}, "a.b", 1)` → {a:{b:1}} |
+| `clone(obj)` | Deep copy | `clone({a:1})` → new object |
 
 ### Type
 
@@ -292,6 +299,65 @@ let html = `
 | `print(args...)` | Print to stdout |
 | `input(prompt?)` | Read line from stdin |
 | `include(path)` | Execute external script |
+
+### Generator Functions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `replicate(n, fn)` | Generate n items | `replicate(3, i => i * 10)` → [0,10,20] |
+| `range(start, end, step?)` | Number sequence | `range(0, 10, 2)` → [0,2,4,6,8,10] |
+| `cross(arr1, arr2, ...)` | Cartesian product | `cross([1,2], ["a","b"])` → [[1,"a"],[1,"b"],[2,"a"],[2,"b"]] |
+
+### Spread Operator
+
+Expand arrays and objects inline:
+
+```jfm
+// Array spread
+let arr = [2, 3];
+[1, ...arr, 4]             // [1, 2, 3, 4]
+
+let a = [1, 2];
+let b = [3, 4];
+[...a, ...b]               // [1, 2, 3, 4]
+
+// Object spread
+let base = { a: 1, b: 2 };
+{ ...base, c: 3 }          // { a: 1, b: 2, c: 3 }
+{ ...base, a: 100 }        // { a: 100, b: 2 }  (override)
+
+let x = { foo: 1 };
+let y = { bar: 2 };
+{ ...x, ...y, baz: 3 }     // { foo: 1, bar: 2, baz: 3 }
+```
+
+### Higher-Order Array Functions
+
+Use lambdas with `map` and `filter` for powerful transformations:
+
+```jfm
+// Map: transform each element
+[1, 2, 3] | map(x => x * 2)                    // [2, 4, 6]
+map([1, 2, 3], x => x * x)                     // [1, 4, 9]
+
+// Filter: keep elements matching predicate
+[1, 2, 3, 4, 5] | filter(x => x > 2)           // [3, 4, 5]
+filter([1, 2, 3, 4], x => x % 2 == 0)          // [2, 4]
+
+// Chain operations
+[1, 2, 3, 4, 5]
+  | map(x => x * x)
+  | filter(x => x > 5)                         // [9, 16, 25]
+
+// With objects
+let users = [{name: "Alice", age: 30}, {name: "Bob", age: 25}];
+users | map(u => u.name)                       // ["Alice", "Bob"]
+users | filter(u => u.age > 26) | map(u => u.name)  // ["Alice"]
+
+// Reduce: accumulate values
+[1, 2, 3, 4] | reduce((acc, x) => acc + x, 0)  // 10
+[1, 2, 3, 4] | reduce((acc, x) => acc * x, 1)  // 24
+```
 
 ## Examples
 
@@ -375,6 +441,57 @@ fn process(data) { data | .active == true | .name }
 // main query
 let result = include("utils.jfm");
 process(root.users)
+```
+
+### Using Generator Functions
+
+```jfm
+// Generate a sequence
+range(1, 5)                                    // [1, 2, 3, 4, 5]
+range(0, 100, 10)                              // [0, 10, 20, ..., 100]
+range(10, 0, -2)                               // [10, 8, 6, 4, 2, 0]
+
+// Create objects with replicate
+replicate(5, i => { id: i, name: `Item ${i}` })
+// [{id:0,name:"Item 0"}, {id:1,name:"Item 1"}, ...]
+
+// Cartesian product
+cross([1, 2], ["a", "b"])
+// [[1,"a"], [1,"b"], [2,"a"], [2,"b"]]
+
+// Deep merge objects
+let defaults = { theme: "dark", size: { width: 100, height: 50 } };
+let custom = { size: { width: 200 } };
+deep_merge(defaults, custom)
+// { theme: "dark", size: { width: 200, height: 50 } }
+
+// Set nested paths
+set_path({}, "config.db.host", "localhost")
+// { config: { db: { host: "localhost" } } }
+
+// Enumerate for index access
+enumerate(["a", "b", "c"]) | map(pair => `${pair[0]}: ${pair[1]}`)
+// ["0: a", "1: b", "2: c"]
+```
+
+### Building Complex Objects
+
+```jfm
+// Combine spread with generators
+let base = { type: "user", active: true };
+replicate(3, i => { ...base, id: i, name: `User ${i}` })
+// [
+//   { type: "user", active: true, id: 0, name: "User 0" },
+//   { type: "user", active: true, id: 1, name: "User 1" },
+//   { type: "user", active: true, id: 2, name: "User 2" }
+// ]
+
+// Clone to avoid mutation
+let original = { data: [1, 2, 3] };
+let copy = clone(original);
+push(copy.data, 4);
+// original.data is still [1, 2, 3]
+// copy.data is [1, 2, 3, 4]
 ```
 
 ## Notes
