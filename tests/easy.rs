@@ -1,4 +1,4 @@
-use jfm::lexer::Value;
+use jfm::Value;
 use jfm::interpreter::parse_and_run;
 use std::rc::Rc;
 use std::cell::RefCell;

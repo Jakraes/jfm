@@ -1,5 +1,7 @@
+use crate::ast::{ArrayElement, BinaryOp, Expr, ExprKind, MatchPattern, ObjectEntry, Stmt, UnaryOp};
 use crate::diagnostic::{Diagnostic, Label, Span};
-use crate::lexer::{ArrayElement, BinaryOp, Expr, ExprKind, MatchPattern, ObjectEntry, Stmt, Token, UnaryOp, Value};
+use crate::token::Token;
+use crate::value::Value;
 use chumsky::Parser as _;
 use std::rc::Rc;
 
@@ -803,7 +805,7 @@ impl TokenParser {
     }
 
     fn parse_template_literal(&mut self, encoded: String, span: Span) -> Result<Expr, ParseError> {
-        use crate::lexer::TemplatePart;
+        use crate::ast::TemplatePart;
         
         // Check if it's a simple template (no interpolations)
         if !encoded.starts_with("TPL:") {

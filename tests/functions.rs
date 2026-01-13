@@ -1,7 +1,7 @@
 //! Comprehensive function tests for all built-in functions
 
 use jfm::interpreter::parse_and_run;
-use jfm::lexer::Value;
+use jfm::Value;
 use std::rc::Rc;
 use std::cell::RefCell;
 use indexmap::IndexMap;

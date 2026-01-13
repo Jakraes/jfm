@@ -1,289 +1,6 @@
 use chumsky::prelude::*;
-use indexmap::IndexMap;
-use std::rc::Rc;
-use std::cell::{RefCell, Ref};
-use crate::diagnostic::Span;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Token {
-    Let,
-    Filter,
-    Map,
-    For,
-    In,
-    If,
-    Else,
-    Return,
-    While,
-    Break,
-    Continue,
-    Fn,
-    Match,
-
-    Ident(String),
-    Number(f64, bool),
-    String(String),
-    TemplateFull(String),
-    True,
-    False,
-    Null,
-    At,  // @ - pipe context variable
-
-    Plus,
-    Minus,
-    Star,
-    Slash,
-    Percent,
-    Caret,
-    Eq,
-    NotEq,
-    Greater,
-    Less,
-    GreaterEq,
-    LessEq,
-    And,
-    Or,
-    Pipe,
-    Bang,
-    Assign,
-    DotDot,
-    Arrow,
-    Comma,
-    Colon,
-    QuestionDot,
-    Question,
-    NullCoalesce,
-
-    Dot,
-    Semicolon,
-    LParen,
-    RParen,
-    LBrace,
-    RBrace,
-    LBracket,
-    RBracket,
-}
-
-#[derive(Debug, Clone)]
-pub enum Value {
-    Null,
-    Bool(bool),
-    Number(f64, bool),
-    String(Rc<str>),
-    Array(Rc<RefCell<Vec<Value>>>),
-    Object(Rc<RefCell<IndexMap<String, Value>>>),
-    Function(Rc<Function>),
-}
-
-impl PartialEq for Value {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Value::Null, Value::Null) => true,
-            (Value::Bool(left_bool), Value::Bool(right_bool)) => left_bool == right_bool,
-            (Value::Number(left_num, _), Value::Number(right_num, _)) => left_num == right_num,
-            (Value::String(left_str), Value::String(right_str)) => left_str == right_str,
-            (Value::Array(left_arr), Value::Array(right_arr)) => left_arr == right_arr,
-            (Value::Object(left_obj), Value::Object(right_obj)) => left_obj == right_obj,
-            (Value::Function(left_fn), Value::Function(right_fn)) => Rc::ptr_eq(left_fn, right_fn),
-            _ => false,
-        }
-    }
-}
-
-impl Value {
-    pub fn as_object(&self) -> Option<Ref<'_, IndexMap<String, Value>>> {
-        if let Value::Object(obj) = self {
-            Some(obj.borrow())
-        } else {
-            None
-        }
-    }
-
-    pub fn as_array(&self) -> Option<Ref<'_, Vec<Value>>> {
-        if let Value::Array(arr) = self {
-            Some(arr.borrow())
-        } else {
-            None
-        }
-    }
-
-    pub fn as_number(&self) -> Option<f64> {
-        if let Value::Number(numeric_value, _) = self {
-            Some(*numeric_value)
-        } else {
-            None
-        }
-    }
-
-    pub fn as_string(&self) -> Option<&str> {
-        if let Value::String(string_ref) = self {
-            Some(string_ref.as_ref())
-        } else {
-            None
-        }
-    }
-
-    pub fn as_bool(&self) -> Option<bool> {
-        if let Value::Bool(bool_value) = self {
-            Some(*bool_value)
-        } else {
-            None
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum BinaryOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Mod,
-    Pow,
-    Eq,
-    NotEq,
-    Greater,
-    Less,
-    GreaterEq,
-    LessEq,
-    And,
-    Or,
-    Pipe,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum UnaryOp {
-    Not,
-    Neg,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ArrayElement {
-    Single(Expr),
-    Spread(Expr),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ObjectEntry {
-    Field { key: String, value: Expr },
-    Spread(Expr),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Expr {
-    pub kind: ExprKind,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Stmt {
-    Let { name: Rc<str>, value: Expr },
-    Expr(Expr),
-    For { var: Rc<str>, iterable: Expr, body: Vec<Stmt> },
-    While { condition: Expr, body: Vec<Stmt> },
-    If { condition: Expr, then_branch: Vec<Stmt>, else_branch: Option<Vec<Stmt>> },
-    Return(Option<Expr>),
-    Break,
-    Continue,
-    Function { name: Rc<str>, params: Vec<Rc<str>>, body: Vec<Stmt> },
-    Block(Vec<Stmt>),
-}
-
-#[derive(Debug, Clone)]
-pub struct Function {
-    pub params: Vec<Rc<str>>,
-    pub body_expr: Option<Box<Expr>>,
-    pub body_stmts: Option<Vec<Stmt>>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ExprKind {
-    Literal(Value),
-    Identifier(Rc<str>),
-    FieldAccess {
-        object: Box<Expr>,
-        field: String,
-    },
-    OptionalFieldAccess {
-        object: Box<Expr>,
-        field: String,
-    },
-    ArrayIndex {
-        array: Box<Expr>,
-        index: Box<Expr>,
-    },
-    Binary {
-        left: Box<Expr>,
-        op: BinaryOp,
-        right: Box<Expr>,
-    },
-    Unary {
-        op: UnaryOp,
-        expr: Box<Expr>,
-    },
-    Pipe {
-        left: Box<Expr>,
-        right: Box<Expr>,
-    },
-    Call {
-        name: Rc<str>,
-        args: Vec<Expr>,
-    },
-    Object {
-        fields: Vec<(String, Expr)>,
-    },
-    ObjectWithSpread {
-        entries: Vec<ObjectEntry>,
-    },
-    Array {
-        elements: Vec<Expr>,
-    },
-    ArrayWithSpread {
-        elements: Vec<ArrayElement>,
-    },
-    Spread(Box<Expr>),
-    Lambda {
-        params: Vec<Rc<str>>,
-        body: Box<Expr>,
-    },
-    Range {
-        start: Box<Expr>,
-        end: Box<Expr>,
-    },
-    Assignment {
-        target: Box<Expr>,
-        value: Box<Expr>,
-    },
-    Ternary {
-        condition: Box<Expr>,
-        then_branch: Box<Expr>,
-        else_branch: Box<Expr>,
-    },
-    NullCoalesce {
-        left: Box<Expr>,
-        right: Box<Expr>,
-    },
-    TemplateLiteral {
-        parts: Vec<TemplatePart>,
-    },
-    Match {
-        value: Box<Expr>,
-        arms: Vec<(MatchPattern, Expr)>,
-    },
-    Grouped(Box<Expr>),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum MatchPattern {
-    Literal(Value),
-    Wildcard,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum TemplatePart {
-    Literal(String),
-    Interpolation(Box<Expr>),
-}
+use crate::token::Token;
 
 pub fn lexer<'a>()
 -> impl Parser<'a, &'a str, Vec<(Token, SimpleSpan)>, extra::Err<Simple<'a, char>>> {
@@ -353,8 +70,7 @@ pub fn lexer<'a>()
         .collect::<Vec<TemplateChunk>>()
     ).then_ignore(just('`'))
     .map(|chunks: Vec<TemplateChunk>| {
-        // Build encoded string from chunks
-        let mut parts: Vec<(bool, String)> = Vec::new(); // (is_expr, content)
+        let mut parts: Vec<(bool, String)> = Vec::new();
         let mut current_text = String::new();
         
         for chunk in chunks {
@@ -414,7 +130,7 @@ pub fn lexer<'a>()
         _ => Token::Ident(s.to_string()),
     });
 
-    let op_binary = choice((
+    let multi_char_operators = choice((
         just("==").to(Token::Eq),
         just("!=").to(Token::NotEq),
         just(">=").to(Token::GreaterEq),
@@ -428,7 +144,7 @@ pub fn lexer<'a>()
         just('?').to(Token::Question),
     ));
 
-    let op_single = choice((
+    let single_char_operators = choice((
         just('+').to(Token::Plus),
         just('-').to(Token::Minus),
         just('*').to(Token::Star),
@@ -453,13 +169,13 @@ pub fn lexer<'a>()
         just('@').to(Token::At),
     ));
 
-    let op = op_binary.or(op_single);
+    let operators = multi_char_operators.or(single_char_operators);
 
     let token = number
         .or(string)
         .or(template_literal)
         .or(ident)
-        .or(op)
+        .or(operators)
         .map_with(|tok, e| (tok, e.span()))
         .padded();
 

@@ -1,7 +1,7 @@
 //! Error handling and edge case tests
 
 use jfm::interpreter::parse_and_run;
-use jfm::lexer::Value;
+use jfm::Value;
 
 // =============================================================================
 // TYPE ERROR TESTS

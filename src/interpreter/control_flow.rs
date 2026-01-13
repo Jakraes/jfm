@@ -1,4 +1,4 @@
-use crate::lexer::Value;
+use crate::value::Value;
 
 pub enum ControlFlow {
     Next,

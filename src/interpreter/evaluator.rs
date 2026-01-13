@@ -1,16 +1,25 @@
-use crate::lexer::{ArrayElement, BinaryOp, Expr, ExprKind, Function, ObjectEntry, Stmt, UnaryOp, Value};
+use crate::ast::{ArrayElement, BinaryOp, Expr, ExprKind, ObjectEntry, Stmt, UnaryOp};
+use crate::value::{Function, Value};
+use super::builtins;
+use super::control_flow::ControlFlow;
 use super::environment::Environment;
 use super::error::InterpreterError;
-use super::control_flow::ControlFlow;
 use super::parser::TokenParser;
-use super::builtins;
 use chumsky::Parser;
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
-/// A segment in a path - either a field name or an array index
+/// Variable name for the pipe context (the current item being processed)
+pub const PIPE_CONTEXT: &str = "@";
+
+/// Variable name for the root JSON value
+pub const ROOT_CONTEXT: &str = "root";
+
+/// Represents a segment in an access path for nested field/index operations.
+/// For example, `.items[0].active` would be represented as:
+/// `[Field("items"), Index(0), Field("active")]`
 #[derive(Debug, Clone)]
-enum PathSegment {
+enum AccessPathSegment {
     Field(String),
     Index(usize),
 }
@@ -30,7 +39,7 @@ impl Interpreter {
 
     pub fn with_root(root: Value) -> Self {
         let env = Environment::new();
-        env.set("root".to_string(), root);
+        env.set(ROOT_CONTEXT.to_string(), root);
         Self {
             env,
             pipe_step: None,
@@ -40,7 +49,7 @@ impl Interpreter {
     pub fn run(&mut self, stmts: Vec<Stmt>) -> Result<Option<Value>, InterpreterError> {
         let mut last_val = None;
         for stmt in stmts {
-            match self.execute_stmt(&stmt)? {
+            match self.execute_statement(&stmt)? {
                 ControlFlow::Return(val) => return Ok(Some(val)),
                 ControlFlow::Value(val) => last_val = Some(val),
                 ControlFlow::Next => last_val = None,
@@ -52,57 +61,50 @@ impl Interpreter {
         Ok(last_val)
     }
 
-    fn execute_stmt(&mut self, stmt: &Stmt) -> Result<ControlFlow, InterpreterError> {
-        match stmt {
+    fn execute_statement(&mut self, statement: &Stmt) -> Result<ControlFlow, InterpreterError> {
+        match statement {
             Stmt::Let { name, value } => {
-                let val = self.eval_expr(value)?;
+                let val = self.evaluate(value)?;
                 self.env.set(name.to_string(), val);
                 Ok(ControlFlow::Next)
             }
             Stmt::Expr(expr) => {
-                let val = self.eval_expr(expr)?;
+                let val = self.evaluate(expr)?;
                 Ok(ControlFlow::Value(val))
             }
             Stmt::Block(stmts) => {
-                let old_env = Rc::new(self.env.clone());
-                self.env = Environment::with_parent(old_env.clone());
+                self.env.push_scope();
 
                 let mut result = ControlFlow::Next;
                 for s in stmts {
-                    match self.execute_stmt(s)? {
+                    match self.execute_statement(s)? {
                         ControlFlow::Return(val) => {
                             result = ControlFlow::Return(val);
                             break;
                         }
                         ControlFlow::Break | ControlFlow::Continue => {
-                            self.env = (*old_env).clone();
-                            return Ok(self.execute_stmt(s)?);
+                            self.env.pop_scope();
+                            return Ok(self.execute_statement(s)?);
                         }
                         ControlFlow::Value(_) | ControlFlow::Next => {}
                     }
                 }
 
-                self.env = (*old_env).clone();
+                self.env.pop_scope();
                 Ok(result)
             }
             Stmt::If { condition, then_branch, else_branch } => {
-                let cond_val = self.eval_expr(condition)?;
-                let truthy = match cond_val {
-                    Value::Bool(b) => b,
-                    Value::Null => false,
-                    _ => true,
-                };
-                
-                if truthy {
-                    self.execute_stmt(&Stmt::Block(then_branch.clone()))
+                let cond_val = self.evaluate(condition)?;
+                if cond_val.is_truthy() {
+                    self.execute_statement(&Stmt::Block(then_branch.clone()))
                 } else if let Some(else_stmts) = else_branch {
-                    self.execute_stmt(&Stmt::Block(else_stmts.clone()))
+                    self.execute_statement(&Stmt::Block(else_stmts.clone()))
                 } else {
                     Ok(ControlFlow::Next)
                 }
             }
             Stmt::For { var, iterable, body } => {
-                let iter_val = self.eval_expr(iterable)?;
+                let iter_val = self.evaluate(iterable)?;
                 let items_rc = match iter_val {
                     Value::Array(arr) => arr,
                     _ => return Err(InterpreterError::type_error("Cannot iterate over non-array")),
@@ -110,19 +112,18 @@ impl Interpreter {
                 
                 let items = items_rc.borrow();
                 for item in items.iter() {
-                    let old_env = Rc::new(self.env.clone());
-                    self.env = Environment::with_parent(old_env.clone());
+                    self.env.push_scope();
                     self.env.set(var.to_string(), item.clone());
 
                     let mut result = ControlFlow::Next;
                     for s in body {
-                        match self.execute_stmt(s)? {
+                        match self.execute_statement(s)? {
                             ControlFlow::Return(val) => {
                                 result = ControlFlow::Return(val);
                                 break;
                             }
                             ControlFlow::Break => {
-                                self.env = (*old_env).clone();
+                                self.env.pop_scope();
                                 return Ok(ControlFlow::Next);
                             }
                             ControlFlow::Continue => {
@@ -133,7 +134,7 @@ impl Interpreter {
                         }
                     }
 
-                    self.env = (*old_env).clone();
+                    self.env.pop_scope();
                     match result {
                         ControlFlow::Return(val) => return Ok(ControlFlow::Return(val)),
                         ControlFlow::Continue => continue,
@@ -145,29 +146,22 @@ impl Interpreter {
             }
             Stmt::While { condition, body } => {
                 loop {
-                    let cond_val = self.eval_expr(condition)?;
-                    let truthy = match cond_val {
-                        Value::Bool(b) => b,
-                        Value::Null => false,
-                        _ => true,
-                    };
-                    
-                    if !truthy {
+                    let cond_val = self.evaluate(condition)?;
+                    if !cond_val.is_truthy() {
                         break;
                     }
                     
-                    let old_env = Rc::new(self.env.clone());
-                    self.env = Environment::with_parent(old_env.clone());
+                    self.env.push_scope();
                     
                     let mut result = ControlFlow::Next;
                     for s in body {
-                        match self.execute_stmt(s)? {
+                        match self.execute_statement(s)? {
                             ControlFlow::Return(val) => {
                                 result = ControlFlow::Return(val);
                                 break;
                             }
                             ControlFlow::Break => {
-                                self.env = (*old_env).clone();
+                                self.env.pop_scope();
                                 return Ok(ControlFlow::Next);
                             }
                             ControlFlow::Continue => {
@@ -178,7 +172,7 @@ impl Interpreter {
                         }
                     }
                     
-                    self.env = (*old_env).clone();
+                    self.env.pop_scope();
                     match result {
                         ControlFlow::Return(val) => return Ok(ControlFlow::Return(val)),
                         ControlFlow::Continue => continue,
@@ -201,7 +195,7 @@ impl Interpreter {
             }
             Stmt::Return(expr) => {
                 let val = if let Some(e) = expr {
-                    self.eval_expr(e)?
+                    self.evaluate(e)?
                 } else {
                     Value::Null
                 };
@@ -210,7 +204,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_expr(&mut self, expr: &Expr) -> Result<Value, InterpreterError> {
+    fn evaluate(&mut self, expr: &Expr) -> Result<Value, InterpreterError> {
         match &expr.kind {
             ExprKind::Literal(val) => Ok(val.clone()),
 
@@ -220,12 +214,12 @@ impl Interpreter {
                 .ok_or_else(|| InterpreterError::undefined_variable_at(name.to_string(), expr.span)),
 
             ExprKind::FieldAccess { object, field } => {
-                let obj = self.eval_expr(object)?;
+                let obj = self.evaluate(object)?;
                 self.get_field(&obj, field)
             }
 
             ExprKind::OptionalFieldAccess { object, field } => {
-                let obj = self.eval_expr(object)?;
+                let obj = self.evaluate(object)?;
                 if matches!(obj, Value::Null) {
                     Ok(Value::Null)
                 } else {
@@ -234,19 +228,19 @@ impl Interpreter {
             }
 
             ExprKind::ArrayIndex { array, index } => {
-                let arr = self.eval_expr(array)?;
-                let idx = self.eval_expr(index)?;
+                let arr = self.evaluate(array)?;
+                let idx = self.evaluate(index)?;
                 self.get_index(&arr, &idx)
             }
 
             ExprKind::Binary { left, op, right } => {
-                let left_val = self.eval_expr(left)?;
-                let right_val = self.eval_expr(right)?;
+                let left_val = self.evaluate(left)?;
+                let right_val = self.evaluate(right)?;
                 self.eval_binary_op(&left_val, op, &right_val)
             }
 
             ExprKind::Unary { op, expr } => {
-                let val = self.eval_expr(expr)?;
+                let val = self.evaluate(expr)?;
                 self.eval_unary_op(op, &val)
             }
 
@@ -269,7 +263,7 @@ impl Interpreter {
                 let current_step = left_pipe_count + 2;
                 
                 // Evaluate the left side (which may itself be a pipe chain)
-                let left_val = match self.eval_expr(left) {
+                let left_val = match self.evaluate(left) {
                     Ok(val) => val,
                     Err(e) => {
                         // If error occurred in left side, we need to determine which step it was
@@ -299,7 +293,7 @@ impl Interpreter {
                 self.pipe_step = Some(current_step);
                 
                 // Evaluate the right side with error wrapping
-                let result = match self.eval_smart_pipe(left_val, right) {
+                let result = match self.apply_pipe_operation(left_val, right) {
                     Ok(val) => Ok(val),
                     Err(e) => {
                         let step_source = self.expr_to_string(right);
@@ -317,12 +311,12 @@ impl Interpreter {
                 result
             }
 
-            ExprKind::Grouped(expr) => self.eval_expr(expr),
+            ExprKind::Grouped(expr) => self.evaluate(expr),
 
             ExprKind::Array { elements } => {
                 let mut vals = Vec::new();
                 for e in elements {
-                    vals.push(self.eval_expr(e)?);
+                    vals.push(self.evaluate(e)?);
                 }
                 Ok(Value::Array(Rc::new(RefCell::new(vals))))
             }
@@ -332,10 +326,10 @@ impl Interpreter {
                 for elem in elements {
                     match elem {
                         ArrayElement::Single(e) => {
-                            vals.push(self.eval_expr(e)?);
+                            vals.push(self.evaluate(e)?);
                         }
                         ArrayElement::Spread(e) => {
-                            let spread_val = self.eval_expr(e)?;
+                            let spread_val = self.evaluate(e)?;
                             match spread_val {
                                 Value::Array(arr) => {
                                     vals.extend(arr.borrow().iter().cloned());
@@ -351,7 +345,7 @@ impl Interpreter {
             ExprKind::Object { fields } => {
                 let mut map = indexmap::IndexMap::new();
                 for (k, v) in fields {
-                    map.insert(k.clone(), self.eval_expr(v)?);
+                    map.insert(k.clone(), self.evaluate(v)?);
                 }
                 Ok(Value::Object(Rc::new(RefCell::new(map))))
             }
@@ -361,10 +355,10 @@ impl Interpreter {
                 for entry in entries {
                     match entry {
                         ObjectEntry::Field { key, value } => {
-                            map.insert(key.clone(), self.eval_expr(value)?);
+                            map.insert(key.clone(), self.evaluate(value)?);
                         }
                         ObjectEntry::Spread(e) => {
-                            let spread_val = self.eval_expr(e)?;
+                            let spread_val = self.evaluate(e)?;
                             match spread_val {
                                 Value::Object(obj) => {
                                     for (k, v) in obj.borrow().iter() {
@@ -395,7 +389,7 @@ impl Interpreter {
             ExprKind::Call { name, args } => {
                 let mut arg_vals = Vec::new();
                 for a in args {
-                    arg_vals.push(self.eval_expr(a)?);
+                    arg_vals.push(self.evaluate(a)?);
                 }
                 
                 if let Some(func_val) = self.env.get(name.as_ref()) {
@@ -408,13 +402,13 @@ impl Interpreter {
             }
 
             ExprKind::Assignment { target, value } => {
-                let val = self.eval_expr(value)?;
+                let val = self.evaluate(value)?;
                 self.perform_assignment(target, val)
             }
 
             ExprKind::Range { start, end } => {
-                let s = self.eval_expr(start)?;
-                let e = self.eval_expr(end)?;
+                let s = self.evaluate(start)?;
+                let e = self.evaluate(end)?;
                 match (s, e) {
                     (Value::Number(start_num, _), Value::Number(end_num, _)) => {
                         let mut values = Vec::new();
@@ -430,36 +424,31 @@ impl Interpreter {
             }
 
             ExprKind::Ternary { condition, then_branch, else_branch } => {
-                let cond_val = self.eval_expr(condition)?;
-                let truthy = match cond_val {
-                    Value::Bool(b) => b,
-                    Value::Null => false,
-                    _ => true,
-                };
-                if truthy {
-                    self.eval_expr(then_branch)
+                let cond_val = self.evaluate(condition)?;
+                if cond_val.is_truthy() {
+                    self.evaluate(then_branch)
                 } else {
-                    self.eval_expr(else_branch)
+                    self.evaluate(else_branch)
                 }
             }
 
             ExprKind::NullCoalesce { left, right } => {
-                let left_val = self.eval_expr(left)?;
+                let left_val = self.evaluate(left)?;
                 if matches!(left_val, Value::Null) {
-                    self.eval_expr(right)
+                    self.evaluate(right)
                 } else {
                     Ok(left_val)
                 }
             }
 
             ExprKind::TemplateLiteral { parts } => {
-                use crate::lexer::TemplatePart;
+                use crate::ast::TemplatePart;
                 let mut result = String::new();
                 for part in parts {
                     match part {
                         TemplatePart::Literal(s) => result.push_str(s),
                         TemplatePart::Interpolation(expr) => {
-                            let val = self.eval_expr(expr)?;
+                            let val = self.evaluate(expr)?;
                             result.push_str(&self.value_to_string(&val));
                         }
                     }
@@ -468,17 +457,17 @@ impl Interpreter {
             }
 
             ExprKind::Match { value, arms } => {
-                use crate::lexer::MatchPattern;
-                let val = self.eval_expr(value)?;
+                use crate::ast::MatchPattern;
+                let val = self.evaluate(value)?;
                 
                 for (pattern, result_expr) in arms {
                     match pattern {
                         MatchPattern::Wildcard => {
-                            return self.eval_expr(result_expr);
+                            return self.evaluate(result_expr);
                         }
                         MatchPattern::Literal(pattern_val) => {
                             if self.values_equal(&val, pattern_val) {
-                                return self.eval_expr(result_expr);
+                                return self.evaluate(result_expr);
                             }
                         }
                     }
@@ -504,12 +493,12 @@ impl Interpreter {
                 // Check if this is a nested path starting from Null (short field/index access)
                 if let Some(path) = self.extract_path_segments(target) {
                     // This is a short access chain like .profile.age or .items[0].name
-                    if let Some(it_val) = self.env.get("@") {
+                    if let Some(it_val) = self.env.get(PIPE_CONTEXT) {
                         self.set_nested_path(&it_val, &path, value.clone())?;
                         return Ok(value);
                     }
                     // Fall back to root
-                    if let Some(root_val) = self.env.get("root") {
+                    if let Some(root_val) = self.env.get(ROOT_CONTEXT) {
                         self.set_nested_path(&root_val, &path, value.clone())?;
                         return Ok(value);
                     }
@@ -517,7 +506,7 @@ impl Interpreter {
                 }
                 
                 // Not a short field access chain, evaluate the object
-                let obj_val = self.eval_expr(object)?;
+                let obj_val = self.evaluate(object)?;
                 match obj_val {
                     Value::Object(map_rc) => {
                         map_rc.borrow_mut().insert(field.clone(), value.clone());
@@ -530,25 +519,25 @@ impl Interpreter {
                 // Check if this is a nested path starting from Null (short field/index access)
                 if let Some(path) = self.extract_path_segments(target) {
                     // This is a short access chain like .items[0] or .data[0].value
-                    if let Some(it_val) = self.env.get("@") {
+                    if let Some(it_val) = self.env.get(PIPE_CONTEXT) {
                         self.set_nested_path(&it_val, &path, value.clone())?;
                         return Ok(value);
                     }
                     // Fall back to root
-                    if let Some(root_val) = self.env.get("root") {
+                    if let Some(root_val) = self.env.get(ROOT_CONTEXT) {
                         self.set_nested_path(&root_val, &path, value.clone())?;
                         return Ok(value);
                     }
                     return Err(InterpreterError::type_error("Cannot set index - no context object"));
                 }
 
-                let idx_val = self.eval_expr(index)?;
+                let idx_val = self.evaluate(index)?;
                 let idx = match idx_val {
                     Value::Number(n, _) => n as usize,
                     _ => return Err(InterpreterError::type_error("Index must be a number")),
                 };
 
-                let arr_val = self.eval_expr(array)?;
+                let arr_val = self.evaluate(array)?;
                 match arr_val {
                     Value::Array(items_rc) => {
                         let mut items = items_rc.borrow_mut();
@@ -566,7 +555,7 @@ impl Interpreter {
         }
     }
     
-    fn eval_smart_pipe(&mut self, left: Value, right: &Expr) -> Result<Value, InterpreterError> {
+    fn apply_pipe_operation(&mut self, left: Value, right: &Expr) -> Result<Value, InterpreterError> {
         // Check if the right side is a lambda - use it for map/filter
         if let ExprKind::Lambda { params, body } = &right.kind {
             return self.eval_pipe_with_lambda(left, params, body);
@@ -576,7 +565,7 @@ impl Interpreter {
         if let ExprKind::Call { name, args } = &right.kind {
             let mut arg_vals = vec![left];
             for a in args {
-                arg_vals.push(self.eval_expr(a)?);
+                arg_vals.push(self.evaluate(a)?);
             }
             
             if let Some(func_val) = self.env.get(name.as_ref()) {
@@ -598,46 +587,41 @@ impl Interpreter {
         
         match left {
             Value::Array(items_rc) => {
-                let mut results = Vec::new();
                 let items = items_rc.borrow();
+                let mut results = Vec::with_capacity(items.len());
+                
                 for item in items.iter() {
-                    let old_env = Rc::new(self.env.clone());
-                    self.env = Environment::with_parent(old_env.clone());
-                    self.env.set("@".to_string(), item.clone());
+                    self.env.push_scope();
+                    self.env.set(PIPE_CONTEXT.to_string(), item.clone());
 
                     if let Some((path, op, value_expr)) = &mutation_info {
-                        // Evaluate the mutation: get current value, apply op, set back
                         let current = self.get_nested_path(item, path)?;
-                        let right_val = self.eval_expr(value_expr)?;
+                        let right_val = self.evaluate(value_expr)?;
                         let new_val = self.eval_binary_op(&current, op, &right_val)?;
                         
-                        // Update the field on @ using nested path
-                        if let Some(it_val) = self.env.get("@") {
+                        if let Some(it_val) = self.env.get(PIPE_CONTEXT) {
                             self.set_nested_path(&it_val, path, new_val)?;
                         }
                         
-                        // Return the modified @
-                        if let Some(modified_item) = self.env.get("@") {
+                        if let Some(modified_item) = self.env.get(PIPE_CONTEXT) {
                             results.push(modified_item);
                         } else {
                             results.push(item.clone());
                         }
                     } else if let Some(path) = &assignment_path {
-                        // Extract the value from the assignment expression
                         if let ExprKind::Assignment { value, .. } = &right.kind {
-                            let new_val = self.eval_expr(value)?;
-                            // Update using nested path
-                            if let Some(it_val) = self.env.get("@") {
+                            let new_val = self.evaluate(value)?;
+                            if let Some(it_val) = self.env.get(PIPE_CONTEXT) {
                                 self.set_nested_path(&it_val, path, new_val)?;
                             }
                         }
-                        if let Some(modified_item) = self.env.get("@") {
+                        if let Some(modified_item) = self.env.get(PIPE_CONTEXT) {
                             results.push(modified_item);
                         } else {
                             results.push(item.clone());
                         }
                     } else {
-                        let res = self.eval_expr(right)?;
+                        let res = self.evaluate(right)?;
                         match res {
                             Value::Bool(b) => {
                                 if b { results.push(item.clone()); }
@@ -646,43 +630,38 @@ impl Interpreter {
                         }
                     }
 
-                    self.env = (*old_env).clone();
+                    self.env.pop_scope();
                 }
 
                 Ok(Value::Array(Rc::new(RefCell::new(results))))
             }
             other => {
-                let old_env = Rc::new(self.env.clone());
-                self.env = Environment::with_parent(old_env.clone());
-                self.env.set("@".to_string(), other.clone());
+                self.env.push_scope();
+                self.env.set(PIPE_CONTEXT.to_string(), other.clone());
                 
                 let result = if let Some((path, op, value_expr)) = &mutation_info {
-                    // Evaluate the mutation using nested path
                     let current = self.get_nested_path(&other, path)?;
-                    let right_val = self.eval_expr(value_expr)?;
+                    let right_val = self.evaluate(value_expr)?;
                     let new_val = self.eval_binary_op(&current, op, &right_val)?;
                     
-                    // Update using nested path
-                    if let Some(it_val) = self.env.get("@") {
+                    if let Some(it_val) = self.env.get(PIPE_CONTEXT) {
                         self.set_nested_path(&it_val, path, new_val)?;
                     }
                     
-                    self.env.get("@").unwrap_or(other)
+                    self.env.get(PIPE_CONTEXT).unwrap_or(other)
                 } else if let Some(path) = &assignment_path {
-                    // Extract the value from the assignment expression
                     if let ExprKind::Assignment { value, .. } = &right.kind {
-                        let new_val = self.eval_expr(value)?;
-                        // Update using nested path
-                        if let Some(it_val) = self.env.get("@") {
+                        let new_val = self.evaluate(value)?;
+                        if let Some(it_val) = self.env.get(PIPE_CONTEXT) {
                             self.set_nested_path(&it_val, path, new_val)?;
                         }
                     }
-                    self.env.get("@").unwrap_or(other)
+                    self.env.get(PIPE_CONTEXT).unwrap_or(other)
                 } else {
-                    self.eval_expr(right)?
+                    self.evaluate(right)?
                 };
                 
-                self.env = (*old_env).clone();
+                self.env.pop_scope();
                 Ok(result)
             }
         }
@@ -692,49 +671,43 @@ impl Interpreter {
     fn eval_pipe_with_lambda(&mut self, left: Value, params: &[Rc<str>], body: &Expr) -> Result<Value, InterpreterError> {
         match left {
             Value::Array(items_rc) => {
-                let mut results = Vec::new();
                 let items = items_rc.borrow();
+                let mut results = Vec::with_capacity(items.len());
                 
                 for item in items.iter() {
-                    let old_env = Rc::new(self.env.clone());
-                    self.env = Environment::with_parent(old_env.clone());
+                    self.env.push_scope();
                     
-                    // Bind parameters
                     if !params.is_empty() {
                         self.env.set(params[0].to_string(), item.clone());
                     }
-                    self.env.set("@".to_string(), item.clone());
+                    self.env.set(PIPE_CONTEXT.to_string(), item.clone());
                     
-                    let res = self.eval_expr(body)?;
+                    let res = self.evaluate(body)?;
                     
                     match res {
                         Value::Bool(b) => {
-                            // Filter: if true, keep the item
                             if b { results.push(item.clone()); }
                         }
                         other => {
-                            // Map: push the transformed value
                             results.push(other);
                         }
                     }
                     
-                    self.env = (*old_env).clone();
+                    self.env.pop_scope();
                 }
                 
                 Ok(Value::Array(Rc::new(RefCell::new(results))))
             }
             other => {
-                // Single value - just apply the lambda
-                let old_env = Rc::new(self.env.clone());
-                self.env = Environment::with_parent(old_env.clone());
+                self.env.push_scope();
                 
                 if !params.is_empty() {
                     self.env.set(params[0].to_string(), other.clone());
                 }
-                self.env.set("@".to_string(), other);
+                self.env.set(PIPE_CONTEXT.to_string(), other);
                 
-                let res = self.eval_expr(body)?;
-                self.env = (*old_env).clone();
+                let res = self.evaluate(body)?;
+                self.env.pop_scope();
                 Ok(res)
             }
         }
@@ -799,20 +772,20 @@ impl Interpreter {
     /// Extract the field path from a nested field access expression starting from Null
     /// e.g., `.profile.age` returns Some([Field("profile"), Field("age")])
     /// e.g., `.items[0].active` returns Some([Field("items"), Index(0), Field("active")])
-    fn extract_path_segments(&self, expr: &Expr) -> Option<Vec<PathSegment>> {
+    fn extract_path_segments(&self, expr: &Expr) -> Option<Vec<AccessPathSegment>> {
         let mut path = Vec::new();
         let mut current = expr;
         
         loop {
             match &current.kind {
                 ExprKind::FieldAccess { object, field } => {
-                    path.push(PathSegment::Field(field.clone()));
+                    path.push(AccessPathSegment::Field(field.clone()));
                     current = object;
                 }
                 ExprKind::ArrayIndex { array, index } => {
                     // Try to evaluate index as a constant number
                     if let ExprKind::Literal(Value::Number(n, _)) = &index.kind {
-                        path.push(PathSegment::Index(*n as usize));
+                        path.push(AccessPathSegment::Index(*n as usize));
                         current = array;
                     } else {
                         return None; // Non-constant index, can't handle statically
@@ -832,7 +805,7 @@ impl Interpreter {
     /// Check if the expression is a mutation pattern in pipe context
     /// Returns Some((path_segments, op, value_expr)) for patterns like `.field + 2`, `.profile.age + 5`, or `.items[0] + 1`
     /// For assignments (.field = value), returns None but is handled separately
-    fn get_pipe_mutation_info(&self, expr: &Expr) -> Option<(Vec<PathSegment>, BinaryOp, Expr)> {
+    fn get_pipe_mutation_info(&self, expr: &Expr) -> Option<(Vec<AccessPathSegment>, BinaryOp, Expr)> {
         // Check for binary ops like `.field + 2`, `.profile.age * 3`, `.items[0] + 1`, etc.
         if let ExprKind::Binary { left, op, right } = &expr.kind {
             // Only treat arithmetic/string ops as mutations, not comparisons
@@ -849,7 +822,7 @@ impl Interpreter {
     
     /// Check if the expression is an assignment on a short field access (.field = value, .profile.age = value, or .items[0] = value)
     /// Returns the path segments if it's a pipe assignment
-    fn get_pipe_assignment_path(&self, expr: &Expr) -> Option<Vec<PathSegment>> {
+    fn get_pipe_assignment_path(&self, expr: &Expr) -> Option<Vec<AccessPathSegment>> {
         if let ExprKind::Assignment { target, .. } = &expr.kind {
             return self.extract_path_segments(target);
         }
@@ -857,7 +830,7 @@ impl Interpreter {
     }
     
     /// Get a value at a nested path (fields and/or array indices) from an object
-    fn get_nested_path(&self, obj: &Value, path: &[PathSegment]) -> Result<Value, InterpreterError> {
+    fn get_nested_path(&self, obj: &Value, path: &[AccessPathSegment]) -> Result<Value, InterpreterError> {
         if path.is_empty() {
             return Ok(obj.clone());
         }
@@ -865,10 +838,10 @@ impl Interpreter {
         let mut current = obj.clone();
         for segment in path {
             current = match segment {
-                PathSegment::Field(field) => {
+                AccessPathSegment::Field(field) => {
                     self.get_field(&current, field)?
                 }
-                PathSegment::Index(idx) => {
+                AccessPathSegment::Index(idx) => {
                     match current {
                         Value::Array(items_rc) => {
                             let items = items_rc.borrow();
@@ -887,7 +860,7 @@ impl Interpreter {
     }
     
     /// Set a value at a nested path (fields and/or array indices), modifying it in place
-    fn set_nested_path(&self, obj: &Value, path: &[PathSegment], value: Value) -> Result<(), InterpreterError> {
+    fn set_nested_path(&self, obj: &Value, path: &[AccessPathSegment], value: Value) -> Result<(), InterpreterError> {
         if path.is_empty() {
             return Err(InterpreterError::invalid_operation("Cannot set empty path"));
         }
@@ -895,14 +868,14 @@ impl Interpreter {
         if path.len() == 1 {
             // Single segment - set directly
             match &path[0] {
-                PathSegment::Field(field) => {
+                AccessPathSegment::Field(field) => {
                     if let Value::Object(map_rc) = obj {
                         map_rc.borrow_mut().insert(field.clone(), value);
                         return Ok(());
                     }
                     return Err(InterpreterError::type_error("Cannot set field on non-object"));
                 }
-                PathSegment::Index(idx) => {
+                AccessPathSegment::Index(idx) => {
                     if let Value::Array(items_rc) = obj {
                         let mut items = items_rc.borrow_mut();
                         if *idx < items.len() {
@@ -921,7 +894,7 @@ impl Interpreter {
         let current = self.get_nested_path(obj, parent_path)?;
         
         match &path[path.len() - 1] {
-            PathSegment::Field(field) => {
+            AccessPathSegment::Field(field) => {
                 if let Value::Object(map_rc) = current {
                     map_rc.borrow_mut().insert(field.clone(), value);
                     Ok(())
@@ -929,7 +902,7 @@ impl Interpreter {
                     Err(InterpreterError::type_error("Cannot set field on non-object"))
                 }
             }
-            PathSegment::Index(idx) => {
+            AccessPathSegment::Index(idx) => {
                 if let Value::Array(items_rc) = current {
                     let mut items = items_rc.borrow_mut();
                     if *idx < items.len() {
@@ -1049,21 +1022,20 @@ impl Interpreter {
             )));
         }
 
-        let old_env = Rc::new(self.env.clone());
-        self.env = Environment::with_parent(old_env.clone());
+        self.env.push_scope();
 
         for (param, arg) in func.params.iter().zip(args.iter()) {
             self.env.set(param.to_string(), arg.clone());
         }
 
         let result = if let Some(ref body_expr) = func.body_expr {
-            self.eval_expr(body_expr)?
+            self.evaluate(body_expr)?
         } else if let Some(ref body_stmts) = func.body_stmts {
             let mut last_val = Value::Null;
             for stmt in body_stmts {
-                match self.execute_stmt(stmt)? {
+                match self.execute_statement(stmt)? {
                     ControlFlow::Return(val) => {
-                        self.env = (*old_env).clone();
+                        self.env.pop_scope();
                         return Ok(val);
                     }
                     ControlFlow::Value(val) => last_val = val,
@@ -1078,7 +1050,7 @@ impl Interpreter {
             return Err(InterpreterError::invalid_operation("Function has no body"));
         };
 
-        self.env = (*old_env).clone();
+        self.env.pop_scope();
         Ok(result)
     }
 
@@ -1124,14 +1096,14 @@ impl Interpreter {
             }
             Value::Null => {
                 // First try @ (for pipe context)
-                if let Some(it) = self.env.get("@") {
+                if let Some(it) = self.env.get(PIPE_CONTEXT) {
                     if let Value::Object(map) = it {
                         return map.borrow().get(field).cloned()
                             .ok_or_else(|| InterpreterError::field_not_found(field));
                     }
                 }
                 // Fall back to root (for top-level .field access)
-                if let Some(root) = self.env.get("root") {
+                if let Some(root) = self.env.get(ROOT_CONTEXT) {
                     if let Value::Object(map) = root {
                         return Ok(map.borrow().get(field).cloned().unwrap_or(Value::Null));
                     }
