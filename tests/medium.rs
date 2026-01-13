@@ -36,7 +36,7 @@ fn test_for_loop() {
     let source = r#"
         let names = [];
         for u in root.users {
-            names += [u.name];
+            names = push(names, u.name);
         }
         names;
     "#;
@@ -59,9 +59,9 @@ fn test_if_else() {
         let results = [];
         for u in root.users {
             if u.age > 30 {
-                results += ["Senior"];
+                results = push(results, "Senior");
             } else {
-                results += ["Junior"];
+                results = push(results, "Junior");
             }
         }
         results;
@@ -143,11 +143,11 @@ fn test_range_operator() {
 }
 
 #[test]
-fn test_compound_assignment() {
+fn test_assignment_operations() {
     let source = r#"
         let x = 10;
-        x += 5;
-        x *= 2;
+        x = x + 5;
+        x = x * 2;
         x;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap();

@@ -78,6 +78,10 @@ root.user.name             // Dot notation
 root.users[0].name         // Array index
 root?.missing?.field       // Optional chaining (returns null)
 root.items.length          // Array length
+
+// Short form (at top level, .field means root.field)
+.users                     // Same as root.users
+.users[0].name             // Same as root.users[0].name
 ```
 
 ### Operators
@@ -112,9 +116,6 @@ let label = match value {
 // Null coalescing
 let name = user.nickname ?? user.name ?? "Anonymous";
 let config = settings?.theme ?? "default";
-
-// Compound assignment
-+= -= *= /=
 
 // Range
 1..5               // [1, 2, 3, 4, 5]
@@ -161,12 +162,33 @@ fn factorial(n) {
 
 ### Pipe Operator
 
-Filter and transform arrays:
+The pipe operator `|` is the primary way to transform data. It automatically handles filtering, mapping, and transformation based on the expression type.
 
 ```jfm
-root.users | .age > 25           // Filter: users over 25
-root.users | .name               // Map: extract names
-root.users | .age > 25 | .name   // Chain: filter then map
+// Filter: boolean expressions filter the array
+.users | .age > 25               // Keep users where age > 25
+.users | .active == true         // Keep active users
+
+// Map: field access extracts values
+.users | .name                   // Extract names → ["Alice", "Bob"]
+
+// Transform: arithmetic on fields mutates and returns objects
+.users | .age * 2                // Double everyone's age, return modified users
+.users | .salary + 1000          // Give everyone a raise
+
+// Lambda: use named parameters for complex transforms
+.users | x => x.name             // Map with named param
+.users | x => x.age > 25         // Filter with named param (returns bool)
+.users | x => x.a + x.b          // Complex expression
+
+// Chaining: combine operations
+.users | .age > 25 | .name       // Filter adults, then get names
+.users | .salary * 1.1 | .name   // Give raise, then get names
+.items | x => x.price > 100 | x => x.name  // Filter expensive, get names
+
+// Function calls: array is prepended as first argument
+.numbers | sum()                 // Same as sum(.numbers)
+.users | sort_by("age")          // Same as sort_by(.users, "age")
 ```
 
 ### Template Literals
@@ -228,8 +250,6 @@ let html = `
 | `every(arr, fn)` | All match? | `every([2,4], x => x % 2 == 0)` → true |
 | `some(arr, fn)` | Any match? | `some([1,2], x => x > 1)` → true |
 | `reduce(arr, fn, init)` | Reduce | `reduce([1,2,3], (a,v) => a+v, 0)` → 6 |
-| `map(arr, fn)` | Transform each | `map([1,2,3], x => x * 2)` → [2,4,6] |
-| `filter(arr, fn)` | Keep matches | `filter([1,2,3], x => x > 1)` → [2,3] |
 | `enumerate(arr)` | Index-value pairs | `enumerate(["a","b"])` → [[0,"a"],[1,"b"]] |
 | `clone(arr)` | Deep copy | `clone([1,[2,3]])` → new array |
 
@@ -331,53 +351,31 @@ let y = { bar: 2 };
 { ...x, ...y, baz: 3 }     // { foo: 1, bar: 2, baz: 3 }
 ```
 
-### Higher-Order Array Functions
-
-Use lambdas with `map` and `filter` for powerful transformations:
-
-```jfm
-// Map: transform each element
-[1, 2, 3] | map(x => x * 2)                    // [2, 4, 6]
-map([1, 2, 3], x => x * x)                     // [1, 4, 9]
-
-// Filter: keep elements matching predicate
-[1, 2, 3, 4, 5] | filter(x => x > 2)           // [3, 4, 5]
-filter([1, 2, 3, 4], x => x % 2 == 0)          // [2, 4]
-
-// Chain operations
-[1, 2, 3, 4, 5]
-  | map(x => x * x)
-  | filter(x => x > 5)                         // [9, 16, 25]
-
-// With objects
-let users = [{name: "Alice", age: 30}, {name: "Bob", age: 25}];
-users | map(u => u.name)                       // ["Alice", "Bob"]
-users | filter(u => u.age > 26) | map(u => u.name)  // ["Alice"]
-
-// Reduce: accumulate values
-[1, 2, 3, 4] | reduce((acc, x) => acc + x, 0)  // 10
-[1, 2, 3, 4] | reduce((acc, x) => acc * x, 1)  // 24
-```
-
 ## Examples
 
 ### Filter and Transform
 
 ```jfm
 // Filter adults and extract names
-root.users | .age >= 18 | .name
+.users | .age >= 18 | .name
+
+// Transform with mutation
+.users | .salary * 1.1           // Give everyone 10% raise
 
 // Get top 3 by score
-take(sort_by(root.users, "score"), 3)
+take(sort_by(.users, "score"), 3)
 
 // Group by department
-group_by(root.employees, "department")
+group_by(.employees, "department")
+
+// Chain with lambdas for complex logic
+.users | x => x.age > 25 && x.active | x => x.name
 ```
 
 ### Aggregation
 
 ```jfm
-let ages = root.users | .age;
+let ages = .users | .age;
 {
     "count": count(ages),
     "avg": avg(ages),
@@ -389,10 +387,11 @@ let ages = root.users | .age;
 ### Data Transformation
 
 ```jfm
-root.users | {
+// Transform each user into a new shape
+.users | {
     "fullName": .firstName + " " + .lastName,
     "isAdult": .age >= 18,
-    "status": if .age > 30 { "Senior" } else { "Junior" }
+    "status": .age > 30 ? "Senior" : "Junior"
 }
 ```
 
@@ -400,22 +399,25 @@ root.users | {
 
 ```jfm
 // Extract nested values
-root.company.employees | .department.name
+.company.employees | .department.name
 
 // Optional chaining for missing fields
-root.user?.address?.city
+.user?.address?.city
 ```
 
 ### Using Loops
 
 ```jfm
 let results = [];
-for user in root.users {
+for user in .users {
     if user.active {
         results = push(results, user.name);
     }
 }
 results
+
+// Or use pipes instead (preferred)
+.users | .active == true | .name
 ```
 
 ### Custom Functions
@@ -429,7 +431,8 @@ fn format_name(user) {
     return user.firstName + " " + user.lastName;
 }
 
-root.users | is_adult(.) | format_name(.)
+// Use lambdas in pipes
+.users | x => is_adult(x) | x => format_name(x)
 ```
 
 ### Modular Scripts

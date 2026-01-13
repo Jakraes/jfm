@@ -338,13 +338,6 @@ impl Interpreter {
                 self.perform_assignment(target, val)
             }
 
-            ExprKind::CompoundAssignment { target, op, value } => {
-                let right_val = self.eval_expr(value)?;
-                let current_val = self.eval_expr(target)?;
-                let new_val = self.eval_binary_op(&current_val, op, &right_val)?;
-                self.perform_assignment(target, new_val)
-            }
-
             ExprKind::Range { start, end } => {
                 let s = self.eval_expr(start)?;
                 let e = self.eval_expr(end)?;
@@ -440,6 +433,16 @@ impl Interpreter {
                         map_rc.borrow_mut().insert(field.clone(), value.clone());
                         Ok(value)
                     }
+                    // Handle short field access (.field) where object is Null - use _it
+                    Value::Null => {
+                        if let Some(it_val) = self.env.get("_it") {
+                            if let Value::Object(map_rc) = it_val {
+                                map_rc.borrow_mut().insert(field.clone(), value.clone());
+                                return Ok(value);
+                            }
+                        }
+                        Err(InterpreterError::type_error("Cannot set field on non-object"))
+                    }
                     _ => Err(InterpreterError::type_error("Cannot set field on non-object")),
                 }
             }
@@ -469,6 +472,11 @@ impl Interpreter {
     }
     
     fn eval_smart_pipe(&mut self, left: Value, right: &Expr) -> Result<Value, InterpreterError> {
+        // Check if the right side is a lambda - use it for map/filter
+        if let ExprKind::Lambda { params, body } = &right.kind {
+            return self.eval_pipe_with_lambda(left, params, body);
+        }
+        
         // Check if the right side is a function call - if so, prepend left as first argument
         if let ExprKind::Call { name, args } = &right.kind {
             let mut arg_vals = vec![left];
@@ -485,6 +493,11 @@ impl Interpreter {
             return self.call_function(name, arg_vals);
         }
         
+        // Check if expression is a binary operation on a short field access (.field + 2)
+        // These should automatically mutate the field and return the modified object
+        // This makes `.id + 2` equivalent to `.id += 2` in pipe context
+        let mutation_info = self.get_pipe_mutation_info(right);
+        
         match left {
             Value::Array(items_rc) => {
                 let mut results = Vec::new();
@@ -494,13 +507,31 @@ impl Interpreter {
                     self.env = Environment::with_parent(old_env.clone());
                     self.env.set("_it".to_string(), item.clone());
 
-                    let res = self.eval_expr(right)?;
-
-                    match res {
-                        Value::Bool(b) => {
-                            if b { results.push(item.clone()); }
+                    if let Some((field, op, value_expr)) = &mutation_info {
+                        // Evaluate the mutation: get current value, apply op, set back
+                        let current = self.get_field(&item, field)?;
+                        let right_val = self.eval_expr(value_expr)?;
+                        let new_val = self.eval_binary_op(&current, op, &right_val)?;
+                        
+                        // Update the field on _it
+                        if let Some(Value::Object(map_rc)) = self.env.get("_it") {
+                            map_rc.borrow_mut().insert(field.clone(), new_val);
                         }
-                        other => results.push(other),
+                        
+                        // Return the modified _it
+                        if let Some(modified_item) = self.env.get("_it") {
+                            results.push(modified_item);
+                        } else {
+                            results.push(item.clone());
+                        }
+                    } else {
+                        let res = self.eval_expr(right)?;
+                        match res {
+                            Value::Bool(b) => {
+                                if b { results.push(item.clone()); }
+                            }
+                            other => results.push(other),
+                        }
                     }
 
                     self.env = (*old_env).clone();
@@ -511,12 +542,99 @@ impl Interpreter {
             other => {
                 let old_env = Rc::new(self.env.clone());
                 self.env = Environment::with_parent(old_env.clone());
+                self.env.set("_it".to_string(), other.clone());
+                
+                let result = if let Some((field, op, value_expr)) = &mutation_info {
+                    // Evaluate the mutation
+                    let current = self.get_field(&other, &field)?;
+                    let right_val = self.eval_expr(value_expr)?;
+                    let new_val = self.eval_binary_op(&current, op, &right_val)?;
+                    
+                    // Update the field on _it
+                    if let Some(Value::Object(map_rc)) = self.env.get("_it") {
+                        map_rc.borrow_mut().insert(field.clone(), new_val);
+                    }
+                    
+                    self.env.get("_it").unwrap_or(other)
+                } else {
+                    self.eval_expr(right)?
+                };
+                
+                self.env = (*old_env).clone();
+                Ok(result)
+            }
+        }
+    }
+    
+    /// Evaluate a pipe with a lambda - handles both map and filter based on return type
+    fn eval_pipe_with_lambda(&mut self, left: Value, params: &[Rc<str>], body: &Expr) -> Result<Value, InterpreterError> {
+        match left {
+            Value::Array(items_rc) => {
+                let mut results = Vec::new();
+                let items = items_rc.borrow();
+                
+                for item in items.iter() {
+                    let old_env = Rc::new(self.env.clone());
+                    self.env = Environment::with_parent(old_env.clone());
+                    
+                    // Bind parameters
+                    if !params.is_empty() {
+                        self.env.set(params[0].to_string(), item.clone());
+                    }
+                    self.env.set("_it".to_string(), item.clone());
+                    
+                    let res = self.eval_expr(body)?;
+                    
+                    match res {
+                        Value::Bool(b) => {
+                            // Filter: if true, keep the item
+                            if b { results.push(item.clone()); }
+                        }
+                        other => {
+                            // Map: push the transformed value
+                            results.push(other);
+                        }
+                    }
+                    
+                    self.env = (*old_env).clone();
+                }
+                
+                Ok(Value::Array(Rc::new(RefCell::new(results))))
+            }
+            other => {
+                // Single value - just apply the lambda
+                let old_env = Rc::new(self.env.clone());
+                self.env = Environment::with_parent(old_env.clone());
+                
+                if !params.is_empty() {
+                    self.env.set(params[0].to_string(), other.clone());
+                }
                 self.env.set("_it".to_string(), other);
-                let res = self.eval_expr(right)?;
+                
+                let res = self.eval_expr(body)?;
                 self.env = (*old_env).clone();
                 Ok(res)
             }
         }
+    }
+    
+    /// Check if the expression is a mutation pattern in pipe context
+    /// Returns Some((field_name, op, value_expr)) for patterns like `.field + 2`
+    fn get_pipe_mutation_info(&self, expr: &Expr) -> Option<(String, BinaryOp, Expr)> {
+        // Check for binary ops like `.field + 2`, `.field * 3`, etc.
+        if let ExprKind::Binary { left, op, right } = &expr.kind {
+            // Only treat arithmetic/string ops as mutations, not comparisons
+            if matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod | BinaryOp::Pow) {
+                // Check if left is a short field access (.field where object is Null)
+                if let ExprKind::FieldAccess { object, field } = &left.kind {
+                    if matches!(object.kind, ExprKind::Literal(Value::Null)) {
+                        return Some((field.clone(), op.clone(), (**right).clone()));
+                    }
+                }
+            }
+        }
+        
+        None
     }
 
     fn call_function_value(&mut self, func_val: &Value, call_args: &[Value]) -> Result<Value, InterpreterError> {
@@ -528,10 +646,9 @@ impl Interpreter {
     }
 
     fn call_function(&mut self, name: &str, args: Vec<Value>) -> Result<Value, InterpreterError> {
-        if matches!(name, "map" | "filter" | "find" | "find_index" | "reduce" | "every" | "some" | "replicate") {
+        // Functions that need closures for callbacks
+        if matches!(name, "find" | "find_index" | "reduce" | "every" | "some" | "replicate") {
             return match name {
-                "map" => builtins::builtin_map(&args, |func, call_args| self.call_function_value(func, call_args)),
-                "filter" => builtins::builtin_filter(&args, |func, call_args| self.call_function_value(func, call_args)),
                 "find" => builtins::builtin_find(&args, |func, call_args| self.call_function_value(func, call_args)),
                 "find_index" => builtins::builtin_find_index(&args, |func, call_args| self.call_function_value(func, call_args)),
                 "reduce" => builtins::builtin_reduce(&args, |func, call_args| self.call_function_value(func, call_args)),
@@ -697,10 +814,17 @@ impl Interpreter {
                 }
             }
             Value::Null => {
+                // First try _it (for pipe context)
                 if let Some(it) = self.env.get("_it") {
                     if let Value::Object(map) = it {
                         return map.borrow().get(field).cloned()
                             .ok_or_else(|| InterpreterError::field_not_found(field));
+                    }
+                }
+                // Fall back to root (for top-level .field access)
+                if let Some(root) = self.env.get("root") {
+                    if let Value::Object(map) = root {
+                        return Ok(map.borrow().get(field).cloned().unwrap_or(Value::Null));
                     }
                 }
                 Ok(Value::Null)

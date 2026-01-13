@@ -125,7 +125,7 @@ fn test_stress_unique_large_array() {
     let source = r#"
         let arr = [];
         for i in 0..500 {
-            arr += [i % 50];
+            arr = push(arr, i % 50);
         }
         unique(arr);
     "#;
@@ -198,7 +198,7 @@ fn test_stress_nested_loops() {
         let result = 0;
         for i in 0..49 {
             for j in 0..49 {
-                result += 1;
+                result = result + 1;
             }
         }
         result;
@@ -215,7 +215,7 @@ fn test_stress_triple_nested_loops() {
         for i in 0..9 {
             for j in 0..9 {
                 for k in 0..9 {
-                    result += 1;
+                    result = result + 1;
                 }
             }
         }
@@ -278,7 +278,7 @@ fn test_stress_large_array_creation() {
     let source = r#"
         let arr = [];
         for i in 0..999 {
-            arr += [{"id": i, "value": i * 2}];
+            arr = push(arr, {"id": i, "value": i * 2});
         }
         count(arr);
     "#;
@@ -339,7 +339,7 @@ fn test_stress_power_calculations() {
     let source = r#"
         let result = [];
         for i in 1..20 {
-            result += [2 ^ i];
+            result = push(result, 2 ^ i);
         }
         result;
     "#;
@@ -360,13 +360,13 @@ fn test_stress_many_conditionals() {
         let results = [];
         for user in root.users {
             if user.age < 25 {
-                results += ["young"];
+                results = push(results, "young");
             } else if user.age < 35 {
-                results += ["middle"];
+                results = push(results, "middle");
             } else if user.age < 50 {
-                results += ["senior"];
+                results = push(results, "senior");
             } else {
-                results += ["elder"];
+                results = push(results, "elder");
             }
         }
         count(results);
@@ -383,7 +383,7 @@ fn test_stress_nested_conditionals() {
             if i % 2 == 0 {
                 if i % 3 == 0 {
                     if i % 5 == 0 {
-                        count += 1;
+                        count = count + 1;
                     }
                 }
             }
@@ -396,15 +396,15 @@ fn test_stress_nested_conditionals() {
 }
 
 // =============================================================================
-// COMPOUND ASSIGNMENT STRESS TESTS
+// ASSIGNMENT STRESS TESTS
 // =============================================================================
 
 #[test]
-fn test_stress_compound_assignments() {
+fn test_stress_assignments() {
     let source = r#"
         let x = 0;
         for i in 0..999 {
-            x += 1;
+            x = x + 1;
         }
         x;
     "#;
@@ -414,13 +414,13 @@ fn test_stress_compound_assignments() {
 }
 
 #[test]
-fn test_stress_mixed_compound_assignments() {
+fn test_stress_mixed_assignments() {
     let source = r#"
         let x = 1000;
         for i in 0..99 {
-            x += 10;
-            x -= 5;
-            x *= 1;
+            x = x + 10;
+            x = x - 5;
+            x = x * 1;
         }
         x;
     "#;

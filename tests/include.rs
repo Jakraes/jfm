@@ -209,7 +209,7 @@ fn test_include_script_with_for_loop() {
     let script = TempScript::new("for_loop", r#"
         let total = 0;
         for user in root.users {
-            total += user.age;
+            total = total + user.age;
         }
         total;
     "#).unwrap();

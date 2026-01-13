@@ -379,39 +379,17 @@ impl TokenParser {
         let start_span = self.current_span();
         let left = self.parse_lambda()?;
 
-        if let Some(token) = self.current_token().cloned() {
-            let op = match token {
-                Token::Assign => Some(None),
-                Token::PlusEq => Some(Some(BinaryOp::Add)),
-                Token::MinusEq => Some(Some(BinaryOp::Sub)),
-                Token::StarEq => Some(Some(BinaryOp::Mul)),
-                Token::SlashEq => Some(Some(BinaryOp::Div)),
-                Token::PipeEq => Some(Some(BinaryOp::Pipe)),
-                _ => None,
-            };
-
-            if let Some(op_kind) = op {
-                self.advance();
-                let right = self.parse_assignment()?;
-                let span = start_span.merge(right.span);
-                return match op_kind {
-                    None => Ok(Expr {
-                        kind: ExprKind::Assignment {
-                            target: Box::new(left),
-                            value: Box::new(right),
-                        },
-                        span,
-                    }),
-                    Some(binary_op) => Ok(Expr {
-                        kind: ExprKind::CompoundAssignment {
-                            target: Box::new(left),
-                            op: binary_op,
-                            value: Box::new(right),
-                        },
-                        span,
-                    }),
-                };
-            }
+        if matches!(self.current_token(), Some(Token::Assign)) {
+            self.advance();
+            let right = self.parse_assignment()?;
+            let span = start_span.merge(right.span);
+            return Ok(Expr {
+                kind: ExprKind::Assignment {
+                    target: Box::new(left),
+                    value: Box::new(right),
+                },
+                span,
+            });
         }
 
         Ok(left)
@@ -490,7 +468,8 @@ impl TokenParser {
 
         while matches!(self.current_token(), Some(Token::Pipe)) {
             self.advance();
-            let right = self.parse_ternary()?;
+            // Parse right side allowing assignments (for pipe-first mutations like .id *= 2)
+            let right = self.parse_pipe_right()?;
             let span = left.span.merge(right.span);
             left = Expr {
                 kind: ExprKind::Pipe {
@@ -502,6 +481,81 @@ impl TokenParser {
         }
 
         Ok(left)
+    }
+
+    // Parse the right side of a pipe, allowing lambdas for map/filter
+    fn parse_pipe_right(&mut self) -> Result<Expr, ParseError> {
+        let saved_current = self.current;
+        let start_span = self.current_span();
+
+        // Try to parse a lambda (x => expr or (x, y) => expr)
+        if let Some(Token::Ident(_)) = self.current_token() {
+            let param_name = match self.advance() {
+                Some(SpannedToken { token: Token::Ident(name), .. }) => Rc::from(name.as_str()),
+                _ => {
+                    self.current = saved_current;
+                    return self.parse_ternary();
+                }
+            };
+
+            if matches!(self.current_token(), Some(Token::Arrow)) {
+                self.advance();
+                let body = self.parse_pipe_right()?;
+                let span = start_span.merge(body.span);
+                return Ok(Expr {
+                    kind: ExprKind::Lambda {
+                        params: vec![param_name],
+                        body: Box::new(body),
+                    },
+                    span,
+                });
+            } else {
+                self.current = saved_current;
+            }
+        } else if matches!(self.current_token(), Some(Token::LParen)) {
+            self.advance();
+            let mut params = Vec::new();
+            if !matches!(self.current_token(), Some(Token::RParen)) {
+                loop {
+                    let param = match self.advance() {
+                        Some(SpannedToken { token: Token::Ident(name), .. }) => Rc::from(name.as_str()),
+                        _ => {
+                            self.current = saved_current;
+                            return self.parse_ternary();
+                        }
+                    };
+                    params.push(param);
+                    if matches!(self.current_token(), Some(Token::Comma)) {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            if !matches!(self.current_token(), Some(Token::RParen)) {
+                self.current = saved_current;
+                return self.parse_ternary();
+            }
+            self.advance();
+
+            if matches!(self.current_token(), Some(Token::Arrow)) {
+                self.advance();
+                let body = self.parse_pipe_right()?;
+                let span = start_span.merge(body.span);
+                return Ok(Expr {
+                    kind: ExprKind::Lambda {
+                        params,
+                        body: Box::new(body),
+                    },
+                    span,
+                });
+            } else {
+                self.current = saved_current;
+            }
+        }
+
+        // Fall back to regular expression parsing
+        self.parse_ternary()
     }
 
     fn parse_ternary(&mut self) -> Result<Expr, ParseError> {
