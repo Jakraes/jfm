@@ -37,6 +37,7 @@ fn value_to_json(val: &Value) -> String {
             format!("{{{}}}", items.join(","))
         }
         Value::Function(_) => "\"<function>\"".to_string(),
+        Value::Module(m) => format!("\"<module:{}>\"" , m.name),
     }
 }
 

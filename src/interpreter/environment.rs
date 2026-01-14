@@ -117,6 +117,22 @@ impl Environment {
     pub fn scope_depth(&self) -> usize {
         self.scopes.borrow().len()
     }
+
+    /// Get all bindings from all scopes (for module exports).
+    /// Returns bindings with inner scopes taking precedence over outer ones.
+    pub fn get_all_bindings(&self) -> Vec<(String, Value)> {
+        let scopes = self.scopes.borrow();
+        let mut result = HashMap::new();
+        
+        // Iterate from outermost to innermost so inner scopes override
+        for scope in scopes.iter() {
+            for (name, value) in scope.iter() {
+                result.insert(name.clone(), value.clone());
+            }
+        }
+        
+        result.into_iter().collect()
+    }
 }
 
 impl Default for Environment {

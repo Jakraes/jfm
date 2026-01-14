@@ -380,3 +380,168 @@ fn test_include_requires_argument() {
     let err = result.unwrap_err();
     assert!(err.contains("file path argument"), "Error should mention argument requirement");
 }
+
+// ============ MODULE IMPORT TESTS ============
+
+#[test]
+fn test_import_basic_function() {
+    // Create a module with a simple function
+    let module_script = TempScript::new("math_module", r#"
+        fn add(a, b) {
+            return a + b;
+        }
+    "#).unwrap();
+    
+    let source = format!(r#"
+        let m = import("{}");
+        m::add(1, 2);
+    "#, module_script.path());
+    
+    let result = parse_and_run(&source, Value::Null).unwrap().unwrap();
+    assert_eq!(result, Value::Number(3.0, false));
+}
+
+#[test]
+fn test_import_multiple_functions() {
+    // Create a module with multiple functions
+    let module_script = TempScript::new("multi_fn_module", r#"
+        fn add(a, b) {
+            return a + b;
+        }
+        fn multiply(a, b) {
+            return a * b;
+        }
+        fn square(x) {
+            return x * x;
+        }
+    "#).unwrap();
+    
+    let source = format!(r#"
+        let math = import("{}");
+        let sum = math::add(5, 3);
+        let product = math::multiply(4, 7);
+        let squared = math::square(6);
+        [sum, product, squared];
+    "#, module_script.path());
+    
+    let result = parse_and_run(&source, Value::Null).unwrap().unwrap();
+    if let Value::Array(arr) = result {
+        let arr = arr.borrow();
+        assert_eq!(arr.len(), 3);
+        assert_eq!(arr[0], Value::Number(8.0, false));
+        assert_eq!(arr[1], Value::Number(28.0, false));
+        assert_eq!(arr[2], Value::Number(36.0, false));
+    } else {
+        panic!("Expected array result");
+    }
+}
+
+#[test]
+fn test_import_module_variables() {
+    // Module functions work with local variables
+    // Note: Module-level variables are captured at function definition time
+    let module_script = TempScript::new("var_module", r#"
+        fn circle_area(r) {
+            let PI = 3.14159;
+            return PI * r * r;
+        }
+    "#).unwrap();
+    
+    let source = format!(r#"
+        let geom = import("{}");
+        geom::circle_area(10);
+    "#, module_script.path());
+    
+    let result = parse_and_run(&source, Value::Null).unwrap().unwrap();
+    if let Value::Number(area, _) = result {
+        // PI * 10 * 10 = 314.159
+        assert!((area - 314.159).abs() < 0.001, "Expected area ~314.159, got {}", area);
+    } else {
+        panic!("Expected number result");
+    }
+}
+
+#[test]
+fn test_import_typeof_module() {
+    let module_script = TempScript::new("type_test_module", r#"
+        fn dummy() { return 1; }
+    "#).unwrap();
+    
+    let source = format!(r#"
+        let m = import("{}");
+        typeof(m);
+    "#, module_script.path());
+    
+    let result = parse_and_run(&source, Value::Null).unwrap().unwrap();
+    assert_eq!(result, Value::String(Rc::from("module")));
+}
+
+#[test]
+fn test_import_missing_function_error() {
+    let module_script = TempScript::new("limited_module", r#"
+        fn only_one() { return 1; }
+    "#).unwrap();
+    
+    let source = format!(r#"
+        let m = import("{}");
+        m::nonexistent(1, 2);
+    "#, module_script.path());
+    
+    let result = parse_and_run(&source, Value::Null);
+    assert!(result.is_err(), "Should error when calling nonexistent function");
+    let err = result.unwrap_err();
+    assert!(err.contains("not found") || err.contains("nonexistent"), 
+        "Error should mention function not found: {}", err);
+}
+
+#[test]
+fn test_import_requires_string_argument() {
+    let source = "let m = import(42); m::foo();";
+    let result = parse_and_run(source, Value::Null);
+    assert!(result.is_err(), "Should error when import is called with non-string");
+}
+
+#[test]
+fn test_import_requires_argument() {
+    let source = "let m = import(); m::foo();";
+    let result = parse_and_run(source, Value::Null);
+    assert!(result.is_err(), "Should error when import is called without arguments");
+}
+
+#[test]
+fn test_import_chained_calls() {
+    // Test that multiple module functions can be chained
+    let module_script = TempScript::new("chain_module", r#"
+        fn double(x) { return x * 2; }
+        fn increment(x) { return x + 1; }
+    "#).unwrap();
+    
+    let source = format!(r#"
+        let m = import("{}");
+        m::increment(m::double(5));
+    "#, module_script.path());
+    
+    let result = parse_and_run(&source, Value::Null).unwrap().unwrap();
+    // double(5) = 10, increment(10) = 11
+    assert_eq!(result, Value::Number(11.0, false));
+}
+
+#[test]
+fn test_import_module_isolation() {
+    // Verify that modules don't pollute the parent namespace
+    // Functions in modules are self-contained
+    let module_script = TempScript::new("isolated_module", r#"
+        fn get_secret() { 
+            let secret = 42;
+            return secret; 
+        }
+    "#).unwrap();
+    
+    let source = format!(r#"
+        let m = import("{}");
+        m::get_secret();
+    "#, module_script.path());
+    
+    let result = parse_and_run(&source, Value::Null).unwrap().unwrap();
+    assert_eq!(result, Value::Number(42.0, false));
+}

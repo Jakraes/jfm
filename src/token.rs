@@ -54,6 +54,7 @@ pub enum Token {
     Arrow,
     Comma,
     Colon,
+    DoubleColon,
     QuestionDot,
     Question,
     NullCoalesce,

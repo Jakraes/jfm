@@ -146,6 +146,12 @@ pub enum ExprKind {
         method: String,
         args: Vec<Expr>,
     },
+    /// Module access like `math::add(1, 2)` for calling module functions
+    ModuleCall {
+        module: Box<Expr>,
+        function: String,
+        args: Vec<Expr>,
+    },
     /// As binding like `@ as name` - binds expression result to name
     AsBinding {
         expr: Box<Expr>,

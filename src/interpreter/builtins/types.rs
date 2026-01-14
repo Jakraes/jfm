@@ -25,6 +25,7 @@ pub fn builtin_typeof(args: &[Value]) -> Result<Value, InterpreterError> {
         Value::Array(_) => "array",
         Value::Object(_) => "object",
         Value::Function(_) => "function",
+        Value::Module(_) => "module",
     })))
 }
 
@@ -97,6 +98,7 @@ pub fn builtin_to_bool(args: &[Value]) -> Result<Value, InterpreterError> {
         Value::Array(a) => !a.borrow().is_empty(),
         Value::Object(o) => !o.borrow().is_empty(),
         Value::Function(_) => true,
+        Value::Module(_) => true,
     }))
 }
 

@@ -13,6 +13,8 @@ pub enum Value {
     Array(Rc<RefCell<Vec<Value>>>),
     Object(Rc<RefCell<IndexMap<String, Value>>>),
     Function(Rc<Function>),
+    /// A module containing exported functions and variables
+    Module(Rc<Module>),
 }
 
 impl PartialEq for Value {
@@ -25,6 +27,7 @@ impl PartialEq for Value {
             (Value::Array(left_arr), Value::Array(right_arr)) => left_arr == right_arr,
             (Value::Object(left_obj), Value::Object(right_obj)) => left_obj == right_obj,
             (Value::Function(left_fn), Value::Function(right_fn)) => Rc::ptr_eq(left_fn, right_fn),
+            (Value::Module(left_mod), Value::Module(right_mod)) => Rc::ptr_eq(left_mod, right_mod),
             _ => false,
         }
     }
@@ -90,5 +93,25 @@ pub struct Function {
 impl PartialEq for Function {
     fn eq(&self, _other: &Self) -> bool {
         false
+    }
+}
+
+/// A module containing exported functions and variables from an imported file
+#[derive(Debug, Clone)]
+pub struct Module {
+    pub name: String,
+    pub exports: IndexMap<String, Value>,
+}
+
+impl Module {
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            exports: IndexMap::new(),
+        }
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Value> {
+        self.exports.get(name)
     }
 }

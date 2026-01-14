@@ -945,6 +945,53 @@ impl TokenParser {
                         span,
                     };
                 }
+                Some(Token::DoubleColon) => {
+                    // Handle module::function(args) call
+                    self.advance();
+                    let fn_span = self.current_span();
+                    let function = match self.advance() {
+                        Some(SpannedToken { token: Token::Ident(fn_name), .. }) => fn_name,
+                        other => {
+                            return Err(ParseError::new(
+                                "expected function name after '::'",
+                                other.map(|st| st.span).unwrap_or(fn_span),
+                            )
+                            .with_expected(vec!["identifier".to_string()]));
+                        }
+                    };
+                    
+                    // Expect arguments (function call is required after ::)
+                    if !matches!(self.current_token(), Some(Token::LParen)) {
+                        return Err(ParseError::new(
+                            "expected '(' after module function name",
+                            self.current_span(),
+                        )
+                        .with_expected(vec!["(".to_string()]));
+                    }
+                    self.advance(); // consume (
+                    
+                    let mut args = Vec::new();
+                    if !matches!(self.current_token(), Some(Token::RParen)) {
+                        loop {
+                            args.push(self.parse_expression()?);
+                            if matches!(self.current_token(), Some(Token::Comma)) {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    let end_span = self.expect(Token::RParen)?;
+                    let span = expr.span.merge(end_span);
+                    expr = Expr {
+                        kind: ExprKind::ModuleCall {
+                            module: Box::new(expr),
+                            function,
+                            args,
+                        },
+                        span,
+                    };
+                }
                 _ => break,
             }
         }

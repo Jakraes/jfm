@@ -32,6 +32,7 @@ pub fn format_json(value: &Value, indent: Option<usize>) -> String {
         }
         Value::String(s) => format!("\"{}\"", escape_json_string(s)),
         Value::Function(_) => "\"<function>\"".to_string(),
+        Value::Module(m) => format!("\"<module:{}>\"" , m.name),
         Value::Array(array) => {
             let items = array.borrow();
             if items.is_empty() {

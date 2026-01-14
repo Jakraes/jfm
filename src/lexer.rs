@@ -143,6 +143,7 @@ pub fn lexer<'a>()
         just("?.").to(Token::QuestionDot),
         just("??").to(Token::NullCoalesce),
         just('?').to(Token::Question),
+        just("::").to(Token::DoubleColon),
     ));
 
     let single_char_operators = choice((

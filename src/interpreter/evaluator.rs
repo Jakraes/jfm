@@ -563,6 +563,42 @@ impl Interpreter {
                 self.call_function(method, all_args)
             }
             
+            ExprKind::ModuleCall { module, function, args } => {
+                // Evaluate the module expression
+                let module_val = self.evaluate(module)?;
+                
+                // Get the function from the module
+                if let Value::Module(mod_ref) = module_val {
+                    let func_val = mod_ref.get(function).ok_or_else(|| {
+                        InterpreterError::invalid_operation_at(
+                            format!("Function '{}' not found in module '{}'", function, mod_ref.name),
+                            expr.span,
+                        )
+                    })?;
+                    
+                    // Evaluate arguments
+                    let mut arg_vals = Vec::new();
+                    for a in args {
+                        arg_vals.push(self.evaluate(a)?);
+                    }
+                    
+                    // Call the function
+                    if let Value::Function(func) = func_val {
+                        self.call_user_function(func, arg_vals)
+                    } else {
+                        Err(InterpreterError::type_error_at(
+                            format!("'{}' is not a function in module '{}'", function, mod_ref.name),
+                            expr.span,
+                        ))
+                    }
+                } else {
+                    Err(InterpreterError::type_error_at(
+                        "Expected a module value before '::'",
+                        module.span,
+                    ))
+                }
+            }
+            
             ExprKind::AsBinding { expr: inner, name } => {
                 // Evaluate and bind to name in current scope
                 let val = self.evaluate(inner)?;
@@ -1241,6 +1277,7 @@ impl Interpreter {
             "sort_by" => builtins::builtin_sort_by(&args, |v, f| self.get_field(v, f)),
             "group_by" => builtins::builtin_group_by(&args, |v, f| self.get_field(v, f)),
             "include" => self.builtin_include(&args),
+            "import" => self.builtin_import(&args),
             "reverse" => builtins::builtin_reverse(&args),
             "enumerate" => builtins::builtin_enumerate(&args),
             "range" => builtins::builtin_range_fn(&args),
@@ -1363,6 +1400,57 @@ impl Interpreter {
             Ok(result.unwrap_or(Value::Null))
         } else {
             Err(InterpreterError::type_error("include requires a string path argument"))
+        }
+    }
+
+    fn builtin_import(&mut self, args: &[Value]) -> Result<Value, InterpreterError> {
+        use crate::value::Module;
+        use indexmap::IndexMap;
+        
+        if args.is_empty() {
+            return Err(InterpreterError::invalid_operation("import requires a file path argument"));
+        }
+        if let Value::String(path) = &args[0] {
+            let script_content = std::fs::read_to_string(path.as_ref())
+                .map_err(|e| InterpreterError::invalid_operation(format!("Failed to read module file '{}': {}", path, e)))?;
+            
+            let lexer = crate::lexer::lexer();
+            let tokens = lexer
+                .parse(&script_content)
+                .into_result()
+                .map_err(|e| InterpreterError::invalid_operation(format!("Lexer error in imported module: {:?}", e)))?;
+            
+            let mut parser = TokenParser::from_lexer_output(tokens, script_content.len());
+            let stmts = parser
+                .parse()
+                .map_err(|e| InterpreterError::invalid_operation(format!("Parser error in imported module: {}", e)))?;
+            
+            // Create a new interpreter to execute the module in isolation
+            let mut module_interpreter = Interpreter::new();
+            module_interpreter.run(stmts)?;
+            
+            // Extract all functions and variables from the module's environment
+            let mut exports: IndexMap<String, Value> = IndexMap::new();
+            for (name, value) in module_interpreter.env.get_all_bindings() {
+                // Export functions and other values (but skip @ and root)
+                if name != PIPE_CONTEXT && name != ROOT_CONTEXT {
+                    exports.insert(name, value);
+                }
+            }
+            
+            // Extract module name from path
+            let module_name = std::path::Path::new(path.as_ref())
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("module")
+                .to_string();
+            
+            Ok(Value::Module(Rc::new(Module {
+                name: module_name,
+                exports,
+            })))
+        } else {
+            Err(InterpreterError::type_error("import requires a string path argument"))
         }
     }
 
@@ -1608,6 +1696,7 @@ impl Interpreter {
                 format!("{{{}}}", fields.join(", "))
             }
             Value::Function(_) => "<function>".to_string(),
+            Value::Module(m) => format!("<module:{}>", m.name),
         }
     }
 

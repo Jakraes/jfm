@@ -116,6 +116,9 @@ user.nickname ?? user.name ?? "Anonymous"
 // Range
 1..5               // [1, 2, 3, 4, 5]
 
+// Module access
+math::add(1, 2)    // Call function from imported module
+
 // String/Array concatenation
 "a" + "b"          // "ab"
 [1, 2] + [3, 4]    // [1, 2, 3, 4]
@@ -401,6 +404,7 @@ let html = `
 | `print(args...)` | Print to stdout |
 | `input(prompt?)` | Read line from stdin |
 | `include(path)` | Execute external script |
+| `import(path)` | Import module (returns module object) |
 
 ---
 
@@ -527,6 +531,44 @@ fn process(data) { data | .active == true | .name }
 let result = include("utils.jfm");
 process(root.users)
 ```
+
+### Module Imports
+
+Import modules to organize code into reusable libraries:
+
+```jfm
+// math.jfm
+fn add(a, b) {
+    return a + b;
+}
+
+fn multiply(a, b) {
+    return a * b;
+}
+
+fn square(x) {
+    return x * x;
+}
+```
+
+```jfm
+// main.jfm
+let math = import("math.jfm");
+
+// Call module functions using ::
+let sum = math::add(5, 3);        // 8
+let product = math::multiply(4, 7);  // 28
+let squared = math::square(6);    // 36
+
+// Chain module function calls
+let result = math::add(math::square(3), math::square(4));  // 25
+```
+
+**Module features:**
+- `import(path)` returns a module object containing all functions defined in the file
+- Use `::` (double colon) to call functions from the module
+- Modules are isolated - their internal variables don't leak to the caller
+- `typeof(module)` returns `"module"`
 
 ---
 
