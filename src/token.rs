@@ -49,11 +49,25 @@ pub enum Token {
 
     // Special Operators
     Pipe,
+    /// |? - Filter pipe operator
+    PipeFilter,
+    /// |> - Map pipe operator  
+    PipeMap,
+    /// |= - Mutate pipe operator
+    PipeMutate,
+    /// |& - Aggregate pipe operator
+    PipeAggregate,
+    /// |# - Tap/debug pipe operator
+    PipeTap,
     Assign,
     DotDot,
+    /// ... - Spread operator (three dots)
+    DotDotDot,
     Arrow,
     Comma,
     Colon,
+    /// :method() - Colon method call prefix
+    ColonIdent(String),
     DoubleColon,
     QuestionDot,
     Question,
