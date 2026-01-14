@@ -3,6 +3,7 @@ pub mod environment;
 pub mod error;
 pub mod builtins;
 pub mod evaluator;
+pub mod value_utils;
 
 pub use error::InterpreterError;
 pub use evaluator::ControlFlow;

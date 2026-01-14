@@ -1,0 +1,6 @@
+{
+    "name": "Bob",
+    "age": 30,
+    "city": "NYC",
+    "ignored": "value"
+}
