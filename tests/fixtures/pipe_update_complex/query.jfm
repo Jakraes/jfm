@@ -1,0 +1,4 @@
+root 
+  |~ .settings.theme => "dark"
+  |~ .settings.notifications.sms => true
+  |~ .user.metadata.last_login => "2024-01-14";

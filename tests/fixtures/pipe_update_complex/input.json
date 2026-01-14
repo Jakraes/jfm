@@ -1,0 +1,15 @@
+{
+    "settings": {
+        "theme": "light",
+        "notifications": {
+            "email": true,
+            "sms": false
+        }
+    },
+    "user": {
+        "name": "Bob",
+        "metadata": {
+            "last_login": "2024-01-10"
+        }
+    }
+}

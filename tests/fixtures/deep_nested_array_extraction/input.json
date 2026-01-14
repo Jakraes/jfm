@@ -1,0 +1,35 @@
+{
+    "name": "root",
+    "children": [
+        {
+            "name": "child1",
+            "targets": [
+                {
+                    "id": "t1",
+                    "value": "v1"
+                },
+                {
+                    "id": "t2",
+                    "value": "v2"
+                }
+            ]
+        },
+        {
+            "name": "child2",
+            "deep": {
+                "targets": [
+                    {
+                        "id": "t3",
+                        "value": "v3"
+                    }
+                ]
+            }
+        }
+    ],
+    "targets": [
+        {
+            "id": "t0",
+            "value": "v0"
+        }
+    ]
+}

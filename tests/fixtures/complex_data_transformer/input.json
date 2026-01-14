@@ -1,0 +1,32 @@
+[
+    {
+        "id": 1,
+        "category": "food",
+        "amount": 25.50,
+        "date": "2024-01-01"
+    },
+    {
+        "id": 2,
+        "category": "tech",
+        "amount": 1200.00,
+        "date": "2024-01-02"
+    },
+    {
+        "id": 3,
+        "category": "food",
+        "amount": 15.20,
+        "date": "2024-01-03"
+    },
+    {
+        "id": 4,
+        "category": "tech",
+        "amount": 50.00,
+        "date": "2024-01-04"
+    },
+    {
+        "id": 5,
+        "category": "utilities",
+        "amount": 85.00,
+        "date": "2024-01-05"
+    }
+]

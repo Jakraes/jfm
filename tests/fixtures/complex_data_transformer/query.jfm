@@ -1,0 +1,16 @@
+let groups = group_by(root, "category");
+let report = {
+  "food": {
+    "total": sum(groups.food | .amount),
+    "count": groups.food.length
+  },
+  "tech": {
+    "total": sum(groups.tech | .amount),
+    "count": groups.tech.length
+  },
+  "utilities": {
+    "total": sum(groups.utilities | .amount),
+    "count": groups.utilities.length
+  }
+};
+report;
