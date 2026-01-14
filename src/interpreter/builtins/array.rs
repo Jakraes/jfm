@@ -506,3 +506,29 @@ pub fn builtin_enumerate(args: &[Value]) -> Result<Value, InterpreterError> {
         Ok(Value::Array(Rc::new(RefCell::new(result))))
     })
 }
+
+pub fn builtin_flat_map(
+    args: &[Value],
+    mut call_fn: impl FnMut(&Value, &[Value]) -> Result<Value, InterpreterError>,
+) -> Result<Value, InterpreterError> {
+    require_args!(args, 2, "flat_map");
+    if let (Value::Array(arr), Value::Function(_)) = (&args[0], &args[1]) {
+        let mut result = Vec::new();
+        for item in arr.borrow().iter() {
+            let mapped = call_fn(&args[1], &[item.clone()])?;
+            match mapped {
+                Value::Array(inner) => {
+                    result.extend(inner.borrow().iter().cloned());
+                }
+                other => {
+                    result.push(other);
+                }
+            }
+        }
+        Ok(Value::Array(Rc::new(RefCell::new(result))))
+    } else {
+        Err(InterpreterError::type_error(
+            "flat_map requires array and function",
+        ))
+    }
+}

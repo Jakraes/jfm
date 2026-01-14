@@ -58,6 +58,10 @@ impl Interpreter {
                 }
             }
         }
+        // If no explicit value was returned, return root as default
+        if last_val.is_none() {
+            last_val = self.env.get(ROOT_CONTEXT);
+        }
         Ok(last_val)
     }
 
@@ -70,7 +74,12 @@ impl Interpreter {
             }
             Stmt::Expr(expr) => {
                 let val = self.evaluate(expr)?;
-                Ok(ControlFlow::Value(val))
+                // Assignments are side-effect statements, don't treat as return values
+                if matches!(expr.kind, ExprKind::Assignment { .. }) {
+                    Ok(ControlFlow::Next)
+                } else {
+                    Ok(ControlFlow::Value(val))
+                }
             }
             Stmt::Block(stmts) => {
                 self.env.push_scope();
@@ -234,6 +243,31 @@ impl Interpreter {
             }
 
             ExprKind::Binary { left, op, right } => {
+                // Special case: n * expr for replication
+                // Applies when: left is a number AND right is NOT a simple expression that evaluates to a number
+                // (i.e., right is an object, array, or uses @)
+                if matches!(op, BinaryOp::Mul) {
+                    let left_val = self.evaluate(left)?;
+                    if let Value::Number(n, _) = &left_val {
+                        // Check if right looks like a replication template (object, array, or contains @)
+                        let is_replication_template = self.is_replication_template(right);
+                        
+                        if is_replication_template {
+                            // It's replication: n * template - evaluate right for each iteration
+                            let count = *n as usize;
+                            let mut results = Vec::with_capacity(count);
+                            for i in 0..count {
+                                self.env.push_scope();
+                                self.env.set(PIPE_CONTEXT.to_string(), Value::Number(i as f64, false));
+                                let val = self.evaluate(right)?;
+                                self.env.pop_scope();
+                                results.push(val);
+                            }
+                            return Ok(Value::Array(Rc::new(RefCell::new(results))));
+                        }
+                        // Not a replication template, do normal evaluation
+                    }
+                }
                 let left_val = self.evaluate(left)?;
                 let right_val = self.evaluate(right)?;
                 self.eval_binary_op(&left_val, op, &right_val)
@@ -245,6 +279,18 @@ impl Interpreter {
             }
 
             ExprKind::Pipe { left, right } => {
+                // Special case: `arr | @ as name` followed by another pipe
+                // Check if left is a Pipe ending with AsBinding
+                // If so, we need to handle this as a combined operation
+                if let ExprKind::Pipe { left: inner_left, right: inner_right } = &left.kind {
+                    if let ExprKind::AsBinding { name, .. } = &inner_right.kind {
+                        // Pattern: arr | @ as name | expr
+                        // Handle as a named lambda over the array
+                        let arr_val = self.evaluate(inner_left)?;
+                        return self.eval_pipe_with_named_binding(arr_val, name, right);
+                    }
+                }
+                
                 // Count how many pipe operators are in the left side
                 let left_pipe_count = self.count_pipe_operators(left);
                 // The current step is left_pipe_count + 1 (the right side we're about to evaluate)
@@ -351,18 +397,37 @@ impl Interpreter {
             }
 
             ExprKind::ObjectWithSpread { entries } => {
-                let mut map = indexmap::IndexMap::new();
+                let mut result = Value::Object(Rc::new(RefCell::new(indexmap::IndexMap::new())));
+                
                 for entry in entries {
                     match entry {
                         ObjectEntry::Field { key, value } => {
-                            map.insert(key.clone(), self.evaluate(value)?);
+                            let val = self.evaluate(value)?;
+                            if let Value::Object(map_rc) = &result {
+                                map_rc.borrow_mut().insert(key.clone(), val);
+                            }
+                        }
+                        ObjectEntry::PathField { path, value } => {
+                            // Handle nested path like `downlink.subcell_id: value`
+                            let val = self.evaluate(value)?;
+                            result = self.set_path_on_value(result, path, val)?;
+                        }
+                        ObjectEntry::Shorthand { name } => {
+                            // Handle shorthand like { name } meaning { name: name }
+                            let val = self.env.get(name.as_str())
+                                .ok_or_else(|| InterpreterError::undefined_variable(name.clone()))?;
+                            if let Value::Object(map_rc) = &result {
+                                map_rc.borrow_mut().insert(name.clone(), val);
+                            }
                         }
                         ObjectEntry::Spread(e) => {
                             let spread_val = self.evaluate(e)?;
                             match spread_val {
                                 Value::Object(obj) => {
-                                    for (k, v) in obj.borrow().iter() {
-                                        map.insert(k.clone(), v.clone());
+                                    if let Value::Object(map_rc) = &result {
+                                        for (k, v) in obj.borrow().iter() {
+                                            map_rc.borrow_mut().insert(k.clone(), v.clone());
+                                        }
                                     }
                                 }
                                 _ => return Err(InterpreterError::type_error("Spread in object requires an object")),
@@ -370,7 +435,7 @@ impl Interpreter {
                         }
                     }
                 }
-                Ok(Value::Object(Rc::new(RefCell::new(map))))
+                Ok(result)
             }
 
             ExprKind::Spread(_) => {
@@ -478,6 +543,51 @@ impl Interpreter {
                     expr.span,
                 ))
             }
+            
+            ExprKind::MethodCall { object, method, args } => {
+                // Method call: obj.method(args) -> method(obj, args)
+                let obj_val = self.evaluate(object)?;
+                let mut all_args = vec![obj_val];
+                for a in args {
+                    all_args.push(self.evaluate(a)?);
+                }
+                
+                // Try user-defined function first
+                if let Some(func_val) = self.env.get(method.as_str()) {
+                    if let Value::Function(func) = func_val {
+                        return self.call_user_function(&func, all_args);
+                    }
+                }
+                
+                // Call builtin
+                self.call_function(method, all_args)
+            }
+            
+            ExprKind::AsBinding { expr: inner, name } => {
+                // Evaluate and bind to name in current scope
+                let val = self.evaluate(inner)?;
+                self.env.set(name.to_string(), val.clone());
+                Ok(val)
+            }
+            
+            ExprKind::Replicate { count, template } => {
+                // n * expr with @ as index
+                let count_val = self.evaluate(count)?;
+                let n = match count_val {
+                    Value::Number(n, _) => n as usize,
+                    _ => return Err(InterpreterError::type_error("Replicate count must be a number")),
+                };
+                
+                let mut results = Vec::with_capacity(n);
+                for i in 0..n {
+                    self.env.push_scope();
+                    self.env.set(PIPE_CONTEXT.to_string(), Value::Number(i as f64, false));
+                    let val = self.evaluate(template)?;
+                    self.env.pop_scope();
+                    results.push(val);
+                }
+                Ok(Value::Array(Rc::new(RefCell::new(results))))
+            }
         }
     }
 
@@ -556,9 +666,67 @@ impl Interpreter {
     }
     
     fn apply_pipe_operation(&mut self, left: Value, right: &Expr) -> Result<Value, InterpreterError> {
+        // Check if the right side is a short array index [n] - index the result directly
+        if let ExprKind::ArrayIndex { array, index } = &right.kind {
+            if matches!(array.kind, ExprKind::Literal(Value::Null)) {
+                let idx = self.evaluate(index)?;
+                return self.get_index(&left, &idx);
+            }
+        }
+        
+        // Check if the right side is `@ as name | expr` - like a named lambda
+        // This handles: arr | @ as x | expr where x is bound per element
+        if let ExprKind::Pipe { left: binding_expr, right: body } = &right.kind {
+            if let ExprKind::AsBinding { expr: inner, name } = &binding_expr.kind {
+                // Treat `arr | @ as x | expr` like a named lambda
+                return self.eval_pipe_with_as_binding(left, inner, name, body);
+            }
+        }
+        
+        // NOTE: `@ as name` bindings are handled in the general iteration logic below
+        // This ensures per-element binding for arrays
+        
         // Check if the right side is a lambda - use it for map/filter
         if let ExprKind::Lambda { params, body } = &right.kind {
             return self.eval_pipe_with_lambda(left, params, body);
+        }
+        
+        // Check if the right side is a bare identifier - call as function with left as arg
+        // This allows: arr | sum, arr | flat, str | upper
+        if let ExprKind::Identifier(name) = &right.kind {
+            // Don't treat @ or other special vars as functions
+            if name.as_ref() != "@" && name.as_ref() != "root" {
+                // Try user-defined function
+                if let Some(func_val) = self.env.get(name.as_ref()) {
+                    if let Value::Function(func) = func_val {
+                        return self.call_user_function(&func, vec![left]);
+                    }
+                }
+                // Try builtin
+                if let Ok(result) = self.call_function(name, vec![left.clone()]) {
+                    return Ok(result);
+                }
+            }
+        }
+        
+        // Check if the right side is a method call - call with left prepended
+        if let ExprKind::MethodCall { object, method, args } = &right.kind {
+            // Evaluate object in context of left
+            self.env.push_scope();
+            self.env.set(PIPE_CONTEXT.to_string(), left.clone());
+            let obj_val = self.evaluate(object)?;
+            let mut all_args = vec![obj_val];
+            for a in args {
+                all_args.push(self.evaluate(a)?);
+            }
+            self.env.pop_scope();
+            
+            if let Some(func_val) = self.env.get(method.as_str()) {
+                if let Value::Function(func) = func_val {
+                    return self.call_user_function(&func, all_args);
+                }
+            }
+            return self.call_function(method, all_args);
         }
         
         // Check if the right side is a function call - if so, prepend left as first argument
@@ -663,6 +831,86 @@ impl Interpreter {
                 
                 self.env.pop_scope();
                 Ok(result)
+            }
+        }
+    }
+    
+    /// Evaluate a pipe chain with a named binding: `arr | @ as name | expr`
+    /// For each element, binds name to the element and evaluates the body expression
+    fn eval_pipe_with_named_binding(&mut self, left: Value, name: &Rc<str>, body: &Expr) -> Result<Value, InterpreterError> {
+        match left {
+            Value::Array(items_rc) => {
+                let items = items_rc.borrow();
+                let mut results = Vec::with_capacity(items.len());
+                
+                for item in items.iter() {
+                    self.env.push_scope();
+                    self.env.set(name.to_string(), item.clone());
+                    self.env.set(PIPE_CONTEXT.to_string(), item.clone());
+                    
+                    // Evaluate the body (which could be any expression or another pipe)
+                    let res = self.evaluate(body)?;
+                    
+                    match res {
+                        Value::Bool(b) => {
+                            if b { results.push(item.clone()); }
+                        }
+                        other => results.push(other),
+                    }
+                    
+                    self.env.pop_scope();
+                }
+                
+                Ok(Value::Array(Rc::new(RefCell::new(results))))
+            }
+            other => {
+                self.env.push_scope();
+                self.env.set(name.to_string(), other.clone());
+                self.env.set(PIPE_CONTEXT.to_string(), other.clone());
+                
+                let res = self.evaluate(body)?;
+                self.env.pop_scope();
+                Ok(res)
+            }
+        }
+    }
+    
+    /// Evaluate a pipe with an `as` binding: `arr | @ as name | expr`
+    /// For each element, binds name to the element and continues piping
+    fn eval_pipe_with_as_binding(&mut self, left: Value, _inner: &Expr, name: &Rc<str>, body: &Expr) -> Result<Value, InterpreterError> {
+        match left {
+            Value::Array(items_rc) => {
+                let items = items_rc.borrow();
+                let mut results = Vec::with_capacity(items.len());
+                
+                for item in items.iter() {
+                    self.env.push_scope();
+                    self.env.set(name.to_string(), item.clone());
+                    self.env.set(PIPE_CONTEXT.to_string(), item.clone());
+                    
+                    // Continue piping - the body might be another pipe or expression
+                    let res = self.evaluate(body)?;
+                    
+                    match res {
+                        Value::Bool(b) => {
+                            if b { results.push(item.clone()); }
+                        }
+                        other => results.push(other),
+                    }
+                    
+                    self.env.pop_scope();
+                }
+                
+                Ok(Value::Array(Rc::new(RefCell::new(results))))
+            }
+            other => {
+                self.env.push_scope();
+                self.env.set(name.to_string(), other.clone());
+                self.env.set(PIPE_CONTEXT.to_string(), other.clone());
+                
+                let res = self.evaluate(body)?;
+                self.env.pop_scope();
+                Ok(res)
             }
         }
     }
@@ -919,6 +1167,43 @@ impl Interpreter {
     }
     
 
+    /// Set a value at a dot-separated path on an object, creating nested objects as needed.
+    /// Used for object literal path fields like `{ downlink.subcell_id: value }`.
+    fn set_path_on_value(&self, obj: Value, path: &[String], value: Value) -> Result<Value, InterpreterError> {
+        if path.is_empty() {
+            return Ok(value);
+        }
+        
+        fn set_recursive(obj: &Value, parts: &[String], value: &Value) -> Value {
+            if parts.is_empty() {
+                return value.clone();
+            }
+            
+            let key = &parts[0];
+            let remaining = &parts[1..];
+            
+            match obj {
+                Value::Object(map_rc) => {
+                    let mut map = map_rc.borrow().clone();
+                    let inner = map
+                        .get(key)
+                        .cloned()
+                        .unwrap_or(Value::Object(Rc::new(RefCell::new(indexmap::IndexMap::new()))));
+                    map.insert(key.clone(), set_recursive(&inner, remaining, value));
+                    Value::Object(Rc::new(RefCell::new(map)))
+                }
+                _ => {
+                    let mut map = indexmap::IndexMap::new();
+                    let inner = Value::Object(Rc::new(RefCell::new(indexmap::IndexMap::new())));
+                    map.insert(key.clone(), set_recursive(&inner, remaining, value));
+                    Value::Object(Rc::new(RefCell::new(map)))
+                }
+            }
+        }
+        
+        Ok(set_recursive(&obj, path, &value))
+    }
+
     fn call_function_value(&mut self, func_val: &Value, call_args: &[Value]) -> Result<Value, InterpreterError> {
         if let Value::Function(func) = func_val {
             self.call_user_function(func, call_args.to_vec())
@@ -929,7 +1214,7 @@ impl Interpreter {
 
     fn call_function(&mut self, name: &str, args: Vec<Value>) -> Result<Value, InterpreterError> {
         // Functions that need closures for callbacks
-        if matches!(name, "find" | "find_index" | "reduce" | "every" | "some" | "replicate") {
+        if matches!(name, "find" | "find_index" | "reduce" | "every" | "some" | "replicate" | "flat_map") {
             return match name {
                 "find" => builtins::builtin_find(&args, |func, call_args| self.call_function_value(func, call_args)),
                 "find_index" => builtins::builtin_find_index(&args, |func, call_args| self.call_function_value(func, call_args)),
@@ -937,6 +1222,7 @@ impl Interpreter {
                 "every" => builtins::builtin_every(&args, |func, call_args| self.call_function_value(func, call_args)),
                 "some" => builtins::builtin_some(&args, |func, call_args| self.call_function_value(func, call_args)),
                 "replicate" => builtins::builtin_replicate(&args, |func, call_args| self.call_function_value(func, call_args)),
+                "flat_map" => builtins::builtin_flat_map(&args, |func, call_args| self.call_function_value(func, call_args)),
                 _ => unreachable!(),
             };
         }
@@ -1128,6 +1414,33 @@ impl Interpreter {
                     .cloned()
                     .ok_or_else(|| InterpreterError::index_out_of_bounds(index, len))
             }
+            (Value::Null, Value::Number(n, _)) => {
+                // Try pipe context first (for [n] in pipe operations)
+                if let Some(it) = self.env.get(PIPE_CONTEXT) {
+                    if let Value::Array(items) = it {
+                        let index = *n as usize;
+                        let len = items.borrow().len();
+                        return items
+                            .borrow()
+                            .get(index)
+                            .cloned()
+                            .ok_or_else(|| InterpreterError::index_out_of_bounds(index, len));
+                    }
+                }
+                // Fall back to root
+                if let Some(root) = self.env.get(ROOT_CONTEXT) {
+                    if let Value::Array(items) = root {
+                        let index = *n as usize;
+                        let len = items.borrow().len();
+                        return items
+                            .borrow()
+                            .get(index)
+                            .cloned()
+                            .ok_or_else(|| InterpreterError::index_out_of_bounds(index, len));
+                    }
+                }
+                Err(InterpreterError::type_error("Cannot index null"))
+            }
             _ => Err(InterpreterError::type_error(
                 "Array indexing requires array and number",
             )),
@@ -1205,6 +1518,38 @@ impl Interpreter {
         }
     }
 
+    /// Check if an expression looks like a replication template (contains @, is an object, or is an array)
+    fn is_replication_template(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            // Objects and arrays are replication templates
+            ExprKind::Object { .. } | ExprKind::ObjectWithSpread { .. } 
+            | ExprKind::Array { .. } | ExprKind::ArrayWithSpread { .. } => true,
+            // @ by itself means we're using the index
+            ExprKind::Identifier(name) if name.as_ref() == "@" => true,
+            // Check for @ usage in nested expressions
+            ExprKind::FieldAccess { object, .. } => self.is_replication_template(object),
+            ExprKind::Binary { left, right, .. } => {
+                self.is_replication_template(left) || self.is_replication_template(right)
+            }
+            ExprKind::Unary { expr, .. } => self.is_replication_template(expr),
+            ExprKind::Grouped(inner) => self.is_replication_template(inner),
+            ExprKind::Call { args, .. } => args.iter().any(|a| self.is_replication_template(a)),
+            ExprKind::TemplateLiteral { parts } => {
+                parts.iter().any(|p| {
+                    if let crate::ast::TemplatePart::Interpolation(e) = p {
+                        self.is_replication_template(e)
+                    } else {
+                        false
+                    }
+                })
+            }
+            // Lambdas with body containing @ - treat as template
+            ExprKind::Lambda { body, .. } => self.is_replication_template(body),
+            // Otherwise it's probably a regular value
+            _ => false,
+        }
+    }
+    
     pub fn deep_equals(&self, a: &Value, b: &Value) -> bool {
         match (a, b) {
             (Value::Null, Value::Null) => true,
@@ -1365,10 +1710,11 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_assignment_returns_none() {
+    fn test_simple_assignment_returns_root() {
+        // When no explicit return, returns root by default
         let source = "let x = 5;";
         let result = parse_and_run(source, Value::Null).unwrap();
-        assert!(result.is_none());
+        assert_eq!(result, Some(Value::Null)); // Returns root (which is null)
     }
 
     #[test]

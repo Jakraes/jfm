@@ -91,7 +91,7 @@
             "patterns": [
                 {
                     "name": "keyword.control.jfm",
-                    "match": "\\b(if|else|for|in|while|break|continue|return|match)\\b"
+                    "match": "\\b(if|else|for|in|while|break|continue|return|match|as)\\b"
                 },
                 {
                     "name": "keyword.declaration.jfm",
@@ -107,7 +107,7 @@
             "patterns": [
                 {
                     "name": "support.function.array.jfm",
-                    "match": "\\b(sum|avg|min|max|unique|sort|sort_by|group_by|reverse|slice|push|pop|shift|flat|first|last|zip|find|find_index|every|some|reduce|enumerate|clone)\\b"
+                    "match": "\\b(sum|avg|min|max|unique|sort|sort_by|group_by|reverse|slice|push|pop|shift|flat|flat_map|first|last|zip|find|find_index|every|some|reduce|enumerate|clone)\\b"
                 },
                 {
                     "name": "support.function.string.jfm",

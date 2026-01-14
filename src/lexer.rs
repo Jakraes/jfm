@@ -124,6 +124,7 @@ pub fn lexer<'a>()
         "continue" => Token::Continue,
         "fn" => Token::Fn,
         "match" => Token::Match,
+        "as" => Token::As,
         "true" => Token::True,
         "false" => Token::False,
         "null" => Token::Null,
@@ -171,12 +172,18 @@ pub fn lexer<'a>()
 
     let operators = multi_char_operators.or(single_char_operators);
 
+    // Line comments: // until end of line
+    let comment = just("//")
+        .then(any().and_is(just('\n').not()).repeated())
+        .padded();
+
     let token = number
         .or(string)
         .or(template_literal)
         .or(ident)
         .or(operators)
         .map_with(|tok, e| (tok, e.span()))
+        .padded_by(comment.repeated())
         .padded();
 
     token.repeated().collect().then_ignore(end())

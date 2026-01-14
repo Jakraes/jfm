@@ -14,6 +14,7 @@ pub enum Token {
     Continue,
     Fn,
     Match,
+    As,
 
     // Literals and Identifiers
     Ident(String),

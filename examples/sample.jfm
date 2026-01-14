@@ -214,6 +214,13 @@ let arr2 = [0, ...arr1, 3, 4];
 let base_user = { role: "user", active: true };
 let admin = { ...base_user, role: "admin" };
 
+// Nested path keys in object literals
+let template = { name: "cell", config: { x: 1 } };
+let updated = { ...template, config.y: 2 };  // { name: "cell", config: { x: 1, y: 2 } }
+
+// Nested paths with replicate - great for generating test data
+let cells = replicate(3, i => { ...template, config.id: i });
+
 // Include external script
 // include("utils.jfm");
 

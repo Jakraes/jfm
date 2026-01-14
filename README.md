@@ -73,8 +73,9 @@ x => x * 2         // Lambdas
 ### Variables
 
 ```jfm
-let x = 10;
-x = 20;            // Reassign
+x = 10             // Simple assignment (let is optional)
+let y = 20         // let is also supported
+x = 30             // Reassign
 ```
 
 ### Field Access
@@ -122,6 +123,12 @@ user.nickname ?? user.name ?? "Anonymous"
 // Spread operator
 [1, ...arr, 4]     // Expand array
 { ...base, c: 3 }  // Expand object
+
+// Shorthand properties
+{name, age}        // Same as {name: name, age: age}
+
+// Replication
+3 * { id: @ }      // [{ id: 0 }, { id: 1 }, { id: 2 }]
 ```
 
 ### Control Flow
@@ -147,10 +154,13 @@ for x in 1..10 {
 
 ```jfm
 // Lambda
-let double = x => x * 2;
-let add = (a, b) => a + b;
+double = x => x * 2
+add = (a, b) => a + b
 
-// Named function
+// Short function syntax
+multiply(a, b) => a * b
+
+// Named function with block
 fn factorial(n) {
     if n <= 1 { return 1; }
     return n * factorial(n - 1);
@@ -209,6 +219,19 @@ Use `@` to explicitly reference the current item in a pipe:
 .users | @.age > 25 && @.active   // Complex filter
 ```
 
+### Named pipe context with `as`
+
+Name the current item for clearer code:
+
+```jfm
+.users | @ as user | user.name   // Name current item "user"
+.cells | @ as cell | 3 * {       // Combine with replication
+    ...user_template,
+    cell_id: cell.id,
+    index: @                      // @ is now replication index
+}
+```
+
 ### Chaining
 
 ```jfm
@@ -216,13 +239,32 @@ Use `@` to explicitly reference the current item in a pipe:
 .items | .price > 100 | .name     // Filter expensive, get names
 ```
 
-### Function calls
-
-Arrays are prepended as the first argument:
+### Indexing with [n]
 
 ```jfm
-.numbers | sum()                  // Same as sum(.numbers)
-.users | sort_by("age")           // Same as sort_by(.users, "age")
+.users | .active == true | [0]    // Get first active user
+.items | .price > 100 | [0]       // Get first expensive item
+```
+
+### Function calls in pipes
+
+Functions work seamlessly in pipes:
+
+```jfm
+.numbers | sum                    // Bare function name: sum(.numbers)
+.numbers | sum()                  // Also works: sum(.numbers)
+.users | sort_by("age")           // With args: sort_by(.users, "age")
+```
+
+### Method-style calls
+
+Call functions as methods:
+
+```jfm
+.numbers.sum()                    // Same as sum(.numbers)
+.users.sort_by("age")             // Same as sort_by(.users, "age")
+str.upper()                       // Same as upper(str)
+cell.get_cell_id()                // Call user-defined function
 ```
 
 ---
@@ -282,6 +324,7 @@ let html = `
 | `some(arr, fn)` | Any match? | `some([1,2], x => x > 1)` → `true` |
 | `reduce(arr, fn, init)` | Reduce | `reduce([1,2,3], (a,v) => a+v, 0)` → `6` |
 | `enumerate(arr)` | Index-value pairs | `enumerate(["a","b"])` → `[[0,"a"],[1,"b"]]` |
+| `flat_map(arr, fn)` | Map then flatten | `flat_map([1,2], x => [x, x*10])` → `[1,10,2,20]` |
 | `clone(val)` | Deep copy | `clone([1,[2,3]])` |
 
 ### String Functions
@@ -432,7 +475,11 @@ fn format_name(user) {
 range(1, 5)                    // [1, 2, 3, 4, 5]
 range(0, 100, 10)              // [0, 10, 20, ..., 100]
 
-// Create objects
+// Replication with *
+3 * { id: @ }                  // [{ id: 0 }, { id: 1 }, { id: 2 }]
+3 * { id: @, name: `Item ${@}` }  // @ is the index
+
+// Create objects with replicate function
 replicate(5, i => { id: i, name: `Item ${i}` })
 
 // Cartesian product
@@ -459,6 +506,15 @@ let arr = [2, 3];
 let base = { a: 1, b: 2 };
 { ...base, c: 3 }              // { a: 1, b: 2, c: 3 }
 { ...base, a: 100 }            // { a: 100, b: 2 } (override)
+
+// Nested path keys in object literals
+let cell = { name: "cell1", config: { x: 1 } };
+{ ...cell, config.y: 2 }       // { name: "cell1", config: { x: 1, y: 2 } }
+
+// Works great with replicate
+let template = { type: "item", data: { active: true } };
+replicate(3, i => { ...template, data.id: i })
+// Creates 3 items with data.id set to 0, 1, 2
 ```
 
 ### Modular Scripts
@@ -477,10 +533,11 @@ process(root.users)
 ## Notes
 
 - `root` contains the input JSON data
+- If no explicit return, `root` is returned by default
+- Comments: `// single line comments`
 - Array indices are zero-based
 - Numbers are 64-bit floats
 - String comparisons are case-sensitive
-- The last expression is the return value
 - Blocks `{ }` create new variable scopes
 
 ## VS Code Extension

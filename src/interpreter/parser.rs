@@ -242,12 +242,92 @@ impl TokenParser {
                 let block = self.parse_block()?;
                 Ok(Stmt::Block(block))
             }
+            Some(Token::Ident(_)) => {
+                // Try short function syntax: name(x, y) => expr
+                if let Some(func) = self.try_parse_short_function()? {
+                    return Ok(func);
+                }
+                // Otherwise parse as expression
+                let expr = self.parse_expression()?;
+                self.expect(Token::Semicolon)?;
+                Ok(Stmt::Expr(expr))
+            }
             _ => {
                 let expr = self.parse_expression()?;
                 self.expect(Token::Semicolon)?;
                 Ok(Stmt::Expr(expr))
             }
         }
+    }
+    
+    /// Try to parse short function syntax: `name(x, y) => expr`
+    /// Returns None if the pattern doesn't match (restores parser position)
+    fn try_parse_short_function(&mut self) -> Result<Option<Stmt>, ParseError> {
+        let saved = self.current;
+        
+        // Get function name
+        let name = match self.advance() {
+            Some(SpannedToken { token: Token::Ident(n), .. }) => Rc::from(n.as_str()),
+            _ => {
+                self.current = saved;
+                return Ok(None);
+            }
+        };
+        
+        // Expect (
+        if !matches!(self.current_token(), Some(Token::LParen)) {
+            self.current = saved;
+            return Ok(None);
+        }
+        self.advance();
+        
+        // Parse parameters
+        let mut params = Vec::new();
+        if !matches!(self.current_token(), Some(Token::RParen)) {
+            loop {
+                match self.advance() {
+                    Some(SpannedToken { token: Token::Ident(p), .. }) => {
+                        params.push(Rc::from(p.as_str()));
+                    }
+                    _ => {
+                        self.current = saved;
+                        return Ok(None);
+                    }
+                }
+                if matches!(self.current_token(), Some(Token::Comma)) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+        
+        // Expect )
+        if !matches!(self.current_token(), Some(Token::RParen)) {
+            self.current = saved;
+            return Ok(None);
+        }
+        self.advance();
+        
+        // Expect =>
+        if !matches!(self.current_token(), Some(Token::Arrow)) {
+            self.current = saved;
+            return Ok(None);
+        }
+        self.advance();
+        
+        // Parse body expression
+        let body_expr = self.parse_expression()?;
+        
+        // Convert to return statement
+        let body = vec![Stmt::Return(Some(body_expr))];
+        
+        // Optionally consume trailing semicolon (short functions can end with or without it)
+        if matches!(self.current_token(), Some(Token::Semicolon)) {
+            self.advance();
+        }
+        
+        Ok(Some(Stmt::Function { name, params, body }))
     }
 
     fn parse_block(&mut self) -> Result<Vec<Stmt>, ParseError> {
@@ -490,6 +570,25 @@ impl TokenParser {
         let saved_current = self.current;
         let start_span = self.current_span();
 
+        // Check for [n] indexing - shorthand for indexing the pipe result
+        if matches!(self.current_token(), Some(Token::LBracket)) {
+            self.advance();
+            let index = self.parse_expression()?;
+            let end_span = self.expect(Token::RBracket)?;
+            let span = start_span.merge(end_span);
+            // Create an array index on the pipe context (null placeholder, will be resolved at runtime)
+            return Ok(Expr {
+                kind: ExprKind::ArrayIndex {
+                    array: Box::new(Expr {
+                        kind: ExprKind::Literal(Value::Null),
+                        span: start_span,
+                    }),
+                    index: Box::new(index),
+                },
+                span,
+            });
+        }
+
         // Try to parse a lambda (x => expr or (x, y) => expr)
         if let Some(Token::Ident(_)) = self.current_token() {
             let param_name = match self.advance() {
@@ -726,14 +825,41 @@ impl TokenParser {
                             .with_expected(vec!["identifier".to_string()]));
                         }
                     };
-                    let span = expr.span.merge(self.previous_span());
-                    expr = Expr {
-                        kind: ExprKind::FieldAccess {
-                            object: Box::new(expr),
-                            field,
-                        },
-                        span,
-                    };
+                    
+                    // Check for method call: obj.method(args)
+                    if matches!(self.current_token(), Some(Token::LParen)) {
+                        self.advance(); // consume (
+                        let mut args = Vec::new();
+                        if !matches!(self.current_token(), Some(Token::RParen)) {
+                            loop {
+                                args.push(self.parse_expression()?);
+                                if matches!(self.current_token(), Some(Token::Comma)) {
+                                    self.advance();
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        let end_span = self.expect(Token::RParen)?;
+                        let span = expr.span.merge(end_span);
+                        expr = Expr {
+                            kind: ExprKind::MethodCall {
+                                object: Box::new(expr),
+                                method: field,
+                                args,
+                            },
+                            span,
+                        };
+                    } else {
+                        let span = expr.span.merge(self.previous_span());
+                        expr = Expr {
+                            kind: ExprKind::FieldAccess {
+                                object: Box::new(expr),
+                                field,
+                            },
+                            span,
+                        };
+                    }
                 }
                 Some(Token::QuestionDot) => {
                     self.advance();
@@ -796,6 +922,28 @@ impl TokenParser {
                             expr.span,
                         ));
                     }
+                }
+                Some(Token::As) => {
+                    // Handle `expr as name` binding
+                    self.advance();
+                    let name = match self.advance() {
+                        Some(SpannedToken { token: Token::Ident(n), .. }) => Rc::from(n.as_str()),
+                        other => {
+                            let err_span = other.map(|st| st.span).unwrap_or(self.current_span());
+                            return Err(ParseError::new(
+                                "expected identifier after 'as'",
+                                err_span,
+                            ));
+                        }
+                    };
+                    let span = expr.span.merge(self.previous_span());
+                    expr = Expr {
+                        kind: ExprKind::AsBinding {
+                            expr: Box::new(expr),
+                            name,
+                        },
+                        span,
+                    };
                 }
                 _ => break,
             }
@@ -988,7 +1136,7 @@ impl TokenParser {
                             entries.push(ObjectEntry::Spread(spread_expr));
                             has_spread = true;
                         } else {
-                            let key = match self.advance() {
+                            let first_key = match self.advance() {
                                 Some(SpannedToken { token: Token::Ident(key_name), .. }) => key_name,
                                 Some(SpannedToken { token: Token::String(key_name), .. }) => key_name,
                                 other => {
@@ -1000,9 +1148,38 @@ impl TokenParser {
                                     ));
                                 }
                             };
-                            self.expect(Token::Colon)?;
-                            let value = self.parse_expression()?;
-                            entries.push(ObjectEntry::Field { key, value });
+                            
+                            // Check for nested path like `downlink.subcell_id: value`
+                            if matches!(self.current_token(), Some(Token::Dot)) {
+                                let mut path = vec![first_key];
+                                while matches!(self.current_token(), Some(Token::Dot)) {
+                                    self.advance(); // consume the dot
+                                    let segment = match self.advance() {
+                                        Some(SpannedToken { token: Token::Ident(name), .. }) => name,
+                                        other => {
+                                            let err_span = other.map(|st| st.span).unwrap_or(self.current_span());
+                                            return Err(ParseError::new(
+                                                "expected identifier after '.' in object key path",
+                                                err_span,
+                                            ));
+                                        }
+                                    };
+                                    path.push(segment);
+                                }
+                                self.expect(Token::Colon)?;
+                                let value = self.parse_expression()?;
+                                entries.push(ObjectEntry::PathField { path, value });
+                                has_spread = true; // PathField requires ObjectWithSpread evaluation
+                            } else if matches!(self.current_token(), Some(Token::Colon)) {
+                                // Regular field with colon
+                                self.expect(Token::Colon)?;
+                                let value = self.parse_expression()?;
+                                entries.push(ObjectEntry::Field { key: first_key, value });
+                            } else {
+                                // Shorthand property: { name } means { name: name }
+                                entries.push(ObjectEntry::Shorthand { name: first_key });
+                                has_spread = true; // Shorthand requires ObjectWithSpread evaluation
+                            }
                         }
                         if matches!(self.current_token(), Some(Token::Comma)) {
                             self.advance();
@@ -1018,10 +1195,10 @@ impl TokenParser {
                         span: start_span.merge(end_span),
                     })
                 } else {
-                    // Convert back to simple object
+                    // Convert back to simple object (only contains Field entries at this point)
                     let fields: Vec<(String, Expr)> = entries.into_iter().map(|e| match e {
                         ObjectEntry::Field { key, value } => (key, value),
-                        ObjectEntry::Spread(_) => unreachable!(),
+                        ObjectEntry::Spread(_) | ObjectEntry::PathField { .. } | ObjectEntry::Shorthand { .. } => unreachable!(),
                     }).collect();
                     Ok(Expr {
                         kind: ExprKind::Object { fields },
