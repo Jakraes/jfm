@@ -27,7 +27,7 @@ pub fn builtin_join(
 ) -> Result<Value, InterpreterError> {
     require_args!(args, 2, "join");
     if let (Value::Array(arr), Value::String(delim)) = (&args[0], &args[1]) {
-        let parts: Vec<String> = arr.borrow().iter().map(|v| value_to_string(v)).collect();
+        let parts: Vec<String> = arr.borrow().iter().map(value_to_string).collect();
         Ok(Value::String(Rc::from(parts.join(delim.as_ref()))))
     } else {
         Err(InterpreterError::type_error(

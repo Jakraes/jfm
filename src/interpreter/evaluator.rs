@@ -1,4 +1,4 @@
-use crate::ast::{ArrayElement, BinaryOp, Expr, ExprKind, ObjectEntry, Stmt, UnaryOp, PipeOp, FunctionParam, FilterPattern, PatternMatcher, AggregateExpr};
+use crate::ast::{ArrayElement, BinaryOp, Expr, ExprKind, ObjectEntry, Stmt, UnaryOp};
 use crate::value::{Function, Value};
 use super::builtins;
 use super::control_flow::ControlFlow;
@@ -27,6 +27,12 @@ enum AccessPathSegment {
 pub struct Interpreter {
     env: Environment,
     pipe_step: Option<usize>,
+}
+
+impl Default for Interpreter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Interpreter {
@@ -65,6 +71,24 @@ impl Interpreter {
         Ok(last_val)
     }
 
+    /// Execute a loop body (for/while) and handle control flow.
+    /// Returns:
+    /// - Ok(Some(ControlFlow::Return(val))) if return was hit
+    /// - Ok(Some(ControlFlow::Break)) if break was hit  
+    /// - Ok(Some(ControlFlow::Continue)) if continue was hit
+    /// - Ok(None) for normal completion
+    fn execute_loop_body(&mut self, body: &[Stmt]) -> Result<Option<ControlFlow>, InterpreterError> {
+        for stmt in body {
+            match self.execute_statement(stmt)? {
+                ControlFlow::Return(val) => return Ok(Some(ControlFlow::Return(val))),
+                ControlFlow::Break => return Ok(Some(ControlFlow::Break)),
+                ControlFlow::Continue => return Ok(Some(ControlFlow::Continue)),
+                ControlFlow::Value(_) | ControlFlow::Next => {}
+            }
+        }
+        Ok(None)
+    }
+
     fn execute_statement(&mut self, statement: &Stmt) -> Result<ControlFlow, InterpreterError> {
         match statement {
             Stmt::Let { name, value } => {
@@ -93,7 +117,7 @@ impl Interpreter {
                         }
                         ControlFlow::Break | ControlFlow::Continue => {
                             self.env.pop_scope();
-                            return Ok(self.execute_statement(s)?);
+                            return self.execute_statement(s);
                         }
                         ControlFlow::Value(_) | ControlFlow::Next => {}
                     }
@@ -124,29 +148,13 @@ impl Interpreter {
                     self.env.push_scope();
                     self.env.set(var.to_string(), item.clone());
 
-                    let mut result = ControlFlow::Next;
-                    for s in body {
-                        match self.execute_statement(s)? {
-                            ControlFlow::Return(val) => {
-                                result = ControlFlow::Return(val);
-                                break;
-                            }
-                            ControlFlow::Break => {
-                                self.env.pop_scope();
-                                return Ok(ControlFlow::Next);
-                            }
-                            ControlFlow::Continue => {
-                                result = ControlFlow::Continue;
-                                break;
-                            }
-                            ControlFlow::Value(_) | ControlFlow::Next => {}
-                        }
-                    }
-
+                    let result = self.execute_loop_body(body)?;
                     self.env.pop_scope();
+                    
                     match result {
-                        ControlFlow::Return(val) => return Ok(ControlFlow::Return(val)),
-                        ControlFlow::Continue => continue,
+                        Some(ControlFlow::Return(val)) => return Ok(ControlFlow::Return(val)),
+                        Some(ControlFlow::Break) => return Ok(ControlFlow::Next),
+                        Some(ControlFlow::Continue) => continue,
                         _ => {}
                     }
                 }
@@ -161,30 +169,13 @@ impl Interpreter {
                     }
                     
                     self.env.push_scope();
-                    
-                    let mut result = ControlFlow::Next;
-                    for s in body {
-                        match self.execute_statement(s)? {
-                            ControlFlow::Return(val) => {
-                                result = ControlFlow::Return(val);
-                                break;
-                            }
-                            ControlFlow::Break => {
-                                self.env.pop_scope();
-                                return Ok(ControlFlow::Next);
-                            }
-                            ControlFlow::Continue => {
-                                result = ControlFlow::Continue;
-                                break;
-                            }
-                            ControlFlow::Value(_) | ControlFlow::Next => {}
-                        }
-                    }
-                    
+                    let result = self.execute_loop_body(body)?;
                     self.env.pop_scope();
+                    
                     match result {
-                        ControlFlow::Return(val) => return Ok(ControlFlow::Return(val)),
-                        ControlFlow::Continue => continue,
+                        Some(ControlFlow::Return(val)) => return Ok(ControlFlow::Return(val)),
+                        Some(ControlFlow::Break) => return Ok(ControlFlow::Next),
+                        Some(ControlFlow::Continue) => continue,
                         _ => {}
                     }
                 }
@@ -282,14 +273,13 @@ impl Interpreter {
                 // Special case: `arr | @ as name` followed by another pipe
                 // Check if left is a Pipe ending with AsBinding
                 // If so, we need to handle this as a combined operation
-                if let ExprKind::Pipe { left: inner_left, right: inner_right } = &left.kind {
-                    if let ExprKind::AsBinding { name, .. } = &inner_right.kind {
+                if let ExprKind::Pipe { left: inner_left, right: inner_right } = &left.kind
+                    && let ExprKind::AsBinding { name, .. } = &inner_right.kind {
                         // Pattern: arr | @ as name | expr
                         // Handle as a named lambda over the array
                         let arr_val = self.evaluate(inner_left)?;
                         return self.eval_pipe_with_named_binding(arr_val, name, right);
                     }
-                }
                 
                 // Count how many pipe operators are in the left side
                 let left_pipe_count = self.count_pipe_operators(left);
@@ -420,37 +410,6 @@ impl Interpreter {
                                 map_rc.borrow_mut().insert(name.clone(), val);
                             }
                         }
-                        ObjectEntry::ProjectionField { path } => {
-                            // Handle projection shorthand: { .field } or { .nested.field }
-                            // Gets value from current context (@) or root
-                            let context = self.env.get(PIPE_CONTEXT)
-                                .or_else(|| self.env.get(ROOT_CONTEXT))
-                                .ok_or_else(|| InterpreterError::invalid_operation("No context for projection"))?;
-                            
-                            let val = self.get_nested_path(&context, &path.iter()
-                                .map(|s| AccessPathSegment::Field(s.clone()))
-                                .collect::<Vec<_>>())?;
-                            
-                            // Use the last part of the path as the key
-                            let key = path.last().cloned().unwrap_or_default();
-                            if let Value::Object(map_rc) = &result {
-                                map_rc.borrow_mut().insert(key, val);
-                            }
-                        }
-                        ObjectEntry::ProjectionRename { new_name, path } => {
-                            // Handle projection with rename: { newName: .field }
-                            let context = self.env.get(PIPE_CONTEXT)
-                                .or_else(|| self.env.get(ROOT_CONTEXT))
-                                .ok_or_else(|| InterpreterError::invalid_operation("No context for projection"))?;
-                            
-                            let val = self.get_nested_path(&context, &path.iter()
-                                .map(|s| AccessPathSegment::Field(s.clone()))
-                                .collect::<Vec<_>>())?;
-                            
-                            if let Value::Object(map_rc) = &result {
-                                map_rc.borrow_mut().insert(new_name.clone(), val);
-                            }
-                        }
                         ObjectEntry::Spread(e) => {
                             let spread_val = self.evaluate(e)?;
                             match spread_val {
@@ -474,12 +433,8 @@ impl Interpreter {
             }
 
             ExprKind::Lambda { params, body } => {
-                // Convert simple params to FunctionParams
-                let func_params: Vec<FunctionParam> = params.iter()
-                    .map(|p| FunctionParam { name: p.clone(), default: None })
-                    .collect();
                 let func = Function {
-                    params: func_params,
+                    params: params.clone(),
                     body_expr: Some(body.clone()),
                     body_stmts: None,
                 };
@@ -492,11 +447,10 @@ impl Interpreter {
                     arg_vals.push(self.evaluate(a)?);
                 }
                 
-                if let Some(func_val) = self.env.get(name.as_ref()) {
-                    if let Value::Function(func) = func_val {
+                if let Some(func_val) = self.env.get(name.as_ref())
+                    && let Value::Function(func) = func_val {
                         return self.call_user_function(&func, arg_vals);
                     }
-                }
                 
                 self.call_function(name, arg_vals)
             }
@@ -588,11 +542,10 @@ impl Interpreter {
                 }
                 
                 // Try user-defined function first
-                if let Some(func_val) = self.env.get(method.as_str()) {
-                    if let Value::Function(func) = func_val {
+                if let Some(func_val) = self.env.get(method.as_str())
+                    && let Value::Function(func) = func_val {
                         return self.call_user_function(&func, all_args);
                     }
-                }
                 
                 // Call builtin
                 self.call_function(method, all_args)
@@ -658,167 +611,6 @@ impl Interpreter {
                     results.push(val);
                 }
                 Ok(Value::Array(Rc::new(RefCell::new(results))))
-            }
-            
-            // New JFM v2 expression kinds
-            
-            ExprKind::PipeExpr { left, op, right } => {
-                let left_val = self.evaluate(left)?;
-                self.apply_typed_pipe_operation(left_val, op, right)
-            }
-            
-            ExprKind::DeepAccess { object, field } => {
-                let obj = self.evaluate(object)?;
-                self.deep_extract(&obj, field)
-            }
-            
-            ExprKind::ColonMethodCall { object, method, args } => {
-                // Colon method call: obj:method(args)
-                let obj_val = self.evaluate(object)?;
-                
-                // Methods that take expression predicates/transforms (don't evaluate args)
-                match method.as_str() {
-                    "where" => {
-                        // :where(predicate) - filter using predicate expression
-                        if args.len() != 1 {
-                            return Err(InterpreterError::invalid_operation(":where requires exactly 1 argument"));
-                        }
-                        return self.apply_pipe_filter(obj_val, &args[0]);
-                    }
-                    "select" => {
-                        // :select(transform) - map using transform expression
-                        if args.len() != 1 {
-                            return Err(InterpreterError::invalid_operation(":select requires exactly 1 argument"));
-                        }
-                        return self.apply_pipe_map(obj_val, &args[0]);
-                    }
-                    _ => {}
-                }
-                
-                // For other methods, evaluate args normally
-                let mut all_args = vec![obj_val];
-                for a in args {
-                    all_args.push(self.evaluate(a)?);
-                }
-                
-                // Map method names to builtins
-                let builtin_name = match method.as_str() {
-                    "sortBy" => "sort_by",
-                    "groupBy" => "group_by",
-                    "take" => "slice",
-                    "find" => "find",
-                    "findAll" => "find_all",
-                    "collect" => "collect",
-                    other => other,
-                };
-                
-                // Try user-defined function first
-                if let Some(func_val) = self.env.get(builtin_name) {
-                    if let Value::Function(func) = func_val {
-                        return self.call_user_function(&func, all_args);
-                    }
-                }
-                
-                // Special handling for :take(n) which maps to slice(arr, 0, n)
-                if method == "take" && all_args.len() == 2 {
-                    let arr = all_args.remove(0);
-                    let n = all_args.remove(0);
-                    return self.call_function("slice", vec![arr, Value::Number(0.0, false), n]);
-                }
-                
-                self.call_function(builtin_name, all_args)
-            }
-            
-            ExprKind::DestructuringLambda { pattern: _pattern, body } => {
-                // Create a function that destructures its argument
-                // TODO: Implement actual destructuring by binding pattern fields from input
-                let func_params = vec![FunctionParam { 
-                    name: Rc::from("__destructure_arg__"), 
-                    default: None 
-                }];
-                let func = Function {
-                    params: func_params,
-                    body_expr: Some(body.clone()),
-                    body_stmts: None,
-                };
-                // Store the pattern for later use during function call
-                // For now, we'll handle this specially in apply_typed_pipe_operation
-                Ok(Value::Function(Rc::new(func)))
-            }
-            
-            ExprKind::SliceRange { start, end } => {
-                // This should be evaluated in the context of a pipe
-                // Get the array from pipe context
-                let arr = self.env.get(PIPE_CONTEXT)
-                    .ok_or_else(|| InterpreterError::invalid_operation("Slice range requires pipe context"))?;
-                
-                if let Value::Array(items_rc) = arr {
-                    let items = items_rc.borrow();
-                    let len = items.len() as i64;
-                    
-                    let start_idx = match start {
-                        Some(s) => {
-                            let v = self.evaluate(s)?;
-                            match v {
-                                Value::Number(n, _) => {
-                                    let idx = n as i64;
-                                    if idx < 0 { (len + idx).max(0) as usize } else { idx as usize }
-                                }
-                                _ => return Err(InterpreterError::type_error("Slice index must be number")),
-                            }
-                        }
-                        None => 0,
-                    };
-                    
-                    let end_idx = match end {
-                        Some(e) => {
-                            let v = self.evaluate(e)?;
-                            match v {
-                                Value::Number(n, _) => {
-                                    let idx = n as i64;
-                                    if idx < 0 { (len + idx).max(0) as usize } else { (idx as usize).min(items.len()) }
-                                }
-                                _ => return Err(InterpreterError::type_error("Slice index must be number")),
-                            }
-                        }
-                        None => items.len(),
-                    };
-                    
-                    let sliced: Vec<Value> = items.iter()
-                        .skip(start_idx)
-                        .take(end_idx.saturating_sub(start_idx))
-                        .cloned()
-                        .collect();
-                    
-                    Ok(Value::Array(Rc::new(RefCell::new(sliced))))
-                } else {
-                    Err(InterpreterError::type_error("Slice requires array"))
-                }
-            }
-            
-            ExprKind::PatternMatch { pattern } => {
-                // Pattern matching is evaluated in pipe context
-                let item = self.env.get(PIPE_CONTEXT)
-                    .ok_or_else(|| InterpreterError::invalid_operation("Pattern match requires pipe context"))?;
-                
-                let matches = self.match_pattern(&item, pattern)?;
-                Ok(Value::Bool(matches))
-            }
-            
-            ExprKind::AggregateObject { fields } => {
-                // Aggregation object for |& operator
-                // This expects the array to be in pipe context
-                let arr = self.env.get(PIPE_CONTEXT)
-                    .ok_or_else(|| InterpreterError::invalid_operation("Aggregation requires pipe context"))?;
-                
-                let mut result = indexmap::IndexMap::new();
-                
-                for (key, agg_expr) in fields {
-                    let val = self.evaluate_aggregate(&arr, agg_expr)?;
-                    result.insert(key.clone(), val);
-                }
-                
-                Ok(Value::Object(Rc::new(RefCell::new(result))))
             }
         }
     }
@@ -899,21 +691,19 @@ impl Interpreter {
     
     fn apply_pipe_operation(&mut self, left: Value, right: &Expr) -> Result<Value, InterpreterError> {
         // Check if the right side is a short array index [n] - index the result directly
-        if let ExprKind::ArrayIndex { array, index } = &right.kind {
-            if matches!(array.kind, ExprKind::Literal(Value::Null)) {
+        if let ExprKind::ArrayIndex { array, index } = &right.kind
+            && matches!(array.kind, ExprKind::Literal(Value::Null)) {
                 let idx = self.evaluate(index)?;
                 return self.get_index(&left, &idx);
             }
-        }
         
         // Check if the right side is `@ as name | expr` - like a named lambda
         // This handles: arr | @ as x | expr where x is bound per element
-        if let ExprKind::Pipe { left: binding_expr, right: body } = &right.kind {
-            if let ExprKind::AsBinding { expr: inner, name } = &binding_expr.kind {
+        if let ExprKind::Pipe { left: binding_expr, right: body } = &right.kind
+            && let ExprKind::AsBinding { expr: inner, name } = &binding_expr.kind {
                 // Treat `arr | @ as x | expr` like a named lambda
                 return self.eval_pipe_with_as_binding(left, inner, name, body);
             }
-        }
         
         // NOTE: `@ as name` bindings are handled in the general iteration logic below
         // This ensures per-element binding for arrays
@@ -929,11 +719,10 @@ impl Interpreter {
             // Don't treat @ or other special vars as functions
             if name.as_ref() != "@" && name.as_ref() != "root" {
                 // Try user-defined function
-                if let Some(func_val) = self.env.get(name.as_ref()) {
-                    if let Value::Function(func) = func_val {
+                if let Some(func_val) = self.env.get(name.as_ref())
+                    && let Value::Function(func) = func_val {
                         return self.call_user_function(&func, vec![left]);
                     }
-                }
                 // Try builtin
                 if let Ok(result) = self.call_function(name, vec![left.clone()]) {
                     return Ok(result);
@@ -953,11 +742,10 @@ impl Interpreter {
             }
             self.env.pop_scope();
             
-            if let Some(func_val) = self.env.get(method.as_str()) {
-                if let Value::Function(func) = func_val {
+            if let Some(func_val) = self.env.get(method.as_str())
+                && let Value::Function(func) = func_val {
                     return self.call_user_function(&func, all_args);
                 }
-            }
             return self.call_function(method, all_args);
         }
         
@@ -968,11 +756,10 @@ impl Interpreter {
                 arg_vals.push(self.evaluate(a)?);
             }
             
-            if let Some(func_val) = self.env.get(name.as_ref()) {
-                if let Value::Function(func) = func_val {
+            if let Some(func_val) = self.env.get(name.as_ref())
+                && let Value::Function(func) = func_val {
                     return self.call_user_function(&func, arg_vals);
                 }
-            }
             
             return self.call_function(name, arg_vals);
         }
@@ -1192,13 +979,9 @@ impl Interpreter {
             }
         }
     }
-    
-    /// A segment in a path - either a field name or an array index
-    /// e.g., `.items[0].active` would be [Field("items"), Index(0), Field("active")]
-    
-    /// Count the number of pipe operations in a pipe chain
-    /// For `a | b | c`, this returns 2 (2 pipe operators, so 3 steps total)
-    /// Returns the number of pipe operators, not the total number of steps
+
+    /// Count the number of pipe operations in a pipe chain.
+    /// For `a | b | c`, this returns 2 (2 pipe operators, so 3 steps total).
     fn count_pipe_operators(&self, expr: &Expr) -> usize {
         match &expr.kind {
             ExprKind::Pipe { left, .. } => {
@@ -1533,20 +1316,9 @@ impl Interpreter {
     }
 
     fn call_user_function(&mut self, func: &Function, args: Vec<Value>) -> Result<Value, InterpreterError> {
-        // Count required parameters (those without defaults)
-        let required_params = func.params.iter().filter(|p| p.default.is_none()).count();
-        
-        if args.len() < required_params {
+        if func.params.len() != args.len() {
             return Err(InterpreterError::invalid_operation(format!(
-                "Function expects at least {} arguments, got {}",
-                required_params,
-                args.len()
-            )));
-        }
-        
-        if args.len() > func.params.len() {
-            return Err(InterpreterError::invalid_operation(format!(
-                "Function expects at most {} arguments, got {}",
+                "Function expects {} arguments, got {}",
                 func.params.len(),
                 args.len()
             )));
@@ -1554,19 +1326,8 @@ impl Interpreter {
 
         self.env.push_scope();
 
-        // Bind parameters, using defaults where args are missing
-        for (i, param) in func.params.iter().enumerate() {
-            let value = if i < args.len() {
-                args[i].clone()
-            } else if let Some(ref default_expr) = param.default {
-                self.evaluate(default_expr)?
-            } else {
-                return Err(InterpreterError::invalid_operation(format!(
-                    "Missing required argument: {}",
-                    param.name
-                )));
-            };
-            self.env.set(param.name.to_string(), value);
+        for (param, arg) in func.params.iter().zip(args.iter()) {
+            self.env.set(param.to_string(), arg.clone());
         }
 
         let result = if let Some(ref body_expr) = func.body_expr {
@@ -1688,18 +1449,16 @@ impl Interpreter {
             }
             Value::Null => {
                 // First try @ (for pipe context)
-                if let Some(it) = self.env.get(PIPE_CONTEXT) {
-                    if let Value::Object(map) = it {
+                if let Some(it) = self.env.get(PIPE_CONTEXT)
+                    && let Value::Object(map) = it {
                         return map.borrow().get(field).cloned()
                             .ok_or_else(|| InterpreterError::field_not_found(field));
                     }
-                }
                 // Fall back to root (for top-level .field access)
-                if let Some(root) = self.env.get(ROOT_CONTEXT) {
-                    if let Value::Object(map) = root {
+                if let Some(root) = self.env.get(ROOT_CONTEXT)
+                    && let Value::Object(map) = root {
                         return Ok(map.borrow().get(field).cloned().unwrap_or(Value::Null));
                     }
-                }
                 Ok(Value::Null)
             }
             _ => Err(InterpreterError::type_error(format!(
@@ -1722,8 +1481,8 @@ impl Interpreter {
             }
             (Value::Null, Value::Number(n, _)) => {
                 // Try pipe context first (for [n] in pipe operations)
-                if let Some(it) = self.env.get(PIPE_CONTEXT) {
-                    if let Value::Array(items) = it {
+                if let Some(it) = self.env.get(PIPE_CONTEXT)
+                    && let Value::Array(items) = it {
                         let index = *n as usize;
                         let len = items.borrow().len();
                         return items
@@ -1732,10 +1491,9 @@ impl Interpreter {
                             .cloned()
                             .ok_or_else(|| InterpreterError::index_out_of_bounds(index, len));
                     }
-                }
                 // Fall back to root
-                if let Some(root) = self.env.get(ROOT_CONTEXT) {
-                    if let Value::Array(items) = root {
+                if let Some(root) = self.env.get(ROOT_CONTEXT)
+                    && let Value::Array(items) = root {
                         let index = *n as usize;
                         let len = items.borrow().len();
                         return items
@@ -1744,7 +1502,6 @@ impl Interpreter {
                             .cloned()
                             .ok_or_else(|| InterpreterError::index_out_of_bounds(index, len));
                     }
-                }
                 Err(InterpreterError::type_error("Cannot index null"))
             }
             _ => Err(InterpreterError::type_error(
@@ -1923,501 +1680,6 @@ impl Interpreter {
             Value::String(s) => format!("\"{}\"", s),
             _ => self.value_to_string(val),
         }
-    }
-
-    pub fn get_variable(&self, name: &str) -> Option<Value> {
-        self.env.get(name)
-    }
-
-    // === JFM v2 Helper Methods ===
-
-    /// Apply typed pipe operation based on PipeOp
-    fn apply_typed_pipe_operation(
-        &mut self,
-        left: Value,
-        op: &PipeOp,
-        right: &Expr,
-    ) -> Result<Value, InterpreterError> {
-        match op {
-            PipeOp::Filter => self.apply_pipe_filter(left, right),
-            PipeOp::Map => self.apply_pipe_map(left, right),
-            PipeOp::Mutate => self.apply_pipe_mutate(left, right),
-            PipeOp::Aggregate => self.apply_pipe_aggregate(left, right),
-            PipeOp::Tap => self.apply_pipe_tap(left, right),
-            PipeOp::Legacy => {
-                // Legacy pipe behavior - auto-detect filter vs map
-                self.apply_legacy_pipe(left, right)
-            }
-        }
-    }
-
-    /// Legacy pipe behavior - auto-detect filter vs map based on expression
-    fn apply_legacy_pipe(&mut self, left: Value, right: &Expr) -> Result<Value, InterpreterError> {
-        // Check if it's an array to decide behavior
-        if let Value::Array(items_rc) = left {
-            let items = items_rc.borrow();
-            
-            // First, evaluate the expression for the first item to check if it returns a boolean
-            if let Some(first_item) = items.first() {
-                self.env.push_scope();
-                self.env.set(PIPE_CONTEXT.to_string(), first_item.clone());
-                let test_result = self.evaluate(right)?;
-                self.env.pop_scope();
-                
-                // If it's a boolean, treat as filter
-                if matches!(test_result, Value::Bool(_)) {
-                    let mut results = Vec::new();
-                    for item in items.iter() {
-                        self.env.push_scope();
-                        self.env.set(PIPE_CONTEXT.to_string(), item.clone());
-                        let predicate_result = self.evaluate(right)?;
-                        self.env.pop_scope();
-                        
-                        if let Value::Bool(true) = predicate_result {
-                            results.push(item.clone());
-                        }
-                    }
-                    return Ok(Value::Array(Rc::new(RefCell::new(results))));
-                }
-            }
-            
-            // Otherwise treat as map
-            let mut results = Vec::with_capacity(items.len());
-            for item in items.iter() {
-                self.env.push_scope();
-                self.env.set(PIPE_CONTEXT.to_string(), item.clone());
-                let mapped = self.evaluate(right)?;
-                self.env.pop_scope();
-                results.push(mapped);
-            }
-            Ok(Value::Array(Rc::new(RefCell::new(results))))
-        } else {
-            // For non-arrays, just set context and evaluate
-            self.env.push_scope();
-            self.env.set(PIPE_CONTEXT.to_string(), left);
-            let result = self.evaluate(right)?;
-            self.env.pop_scope();
-            Ok(result)
-        }
-    }
-
-    /// |? - Filter operation: keeps items where predicate is true
-    fn apply_pipe_filter(&mut self, left: Value, right: &Expr) -> Result<Value, InterpreterError> {
-        if let Value::Array(items_rc) = left {
-            let items = items_rc.borrow();
-            let mut results = Vec::new();
-            
-            for item in items.iter() {
-                self.env.push_scope();
-                self.env.set(PIPE_CONTEXT.to_string(), item.clone());
-                
-                let predicate_result = self.evaluate(right)?;
-                
-                self.env.pop_scope();
-                
-                if let Value::Bool(true) = predicate_result {
-                    results.push(item.clone());
-                }
-            }
-            
-            Ok(Value::Array(Rc::new(RefCell::new(results))))
-        } else {
-            Err(InterpreterError::type_error("Filter (|?) requires an array"))
-        }
-    }
-
-    /// |> - Map operation: transforms each item
-    fn apply_pipe_map(&mut self, left: Value, right: &Expr) -> Result<Value, InterpreterError> {
-        if let Value::Array(items_rc) = left {
-            let items = items_rc.borrow();
-            let mut results = Vec::with_capacity(items.len());
-            
-            for item in items.iter() {
-                self.env.push_scope();
-                self.env.set(PIPE_CONTEXT.to_string(), item.clone());
-                
-                let mapped = self.evaluate(right)?;
-                
-                self.env.pop_scope();
-                results.push(mapped);
-            }
-            
-            Ok(Value::Array(Rc::new(RefCell::new(results))))
-        } else {
-            // For non-arrays, just evaluate with the value as context
-            self.env.push_scope();
-            self.env.set(PIPE_CONTEXT.to_string(), left);
-            let result = self.evaluate(right)?;
-            self.env.pop_scope();
-            Ok(result)
-        }
-    }
-
-    /// |= - Mutate operation: modifies items in place (returns new array)
-    fn apply_pipe_mutate(&mut self, left: Value, right: &Expr) -> Result<Value, InterpreterError> {
-        if let Value::Array(items_rc) = left {
-            let items = items_rc.borrow();
-            let mut results = Vec::with_capacity(items.len());
-            
-            for item in items.iter() {
-                // Clone the item and merge with the mutation expression
-                let mut new_item = item.clone();
-                
-                self.env.push_scope();
-                self.env.set(PIPE_CONTEXT.to_string(), item.clone());
-                
-                let mutation = self.evaluate(right)?;
-                
-                self.env.pop_scope();
-                
-                // Merge mutation into item if both are objects
-                if let (Value::Object(obj_rc), Value::Object(mutation_rc)) = (&mut new_item, &mutation) {
-                    let mut obj = obj_rc.borrow_mut();
-                    for (k, v) in mutation_rc.borrow().iter() {
-                        obj.insert(k.clone(), v.clone());
-                    }
-                } else {
-                    // If not both objects, replace entirely
-                    new_item = mutation;
-                }
-                
-                results.push(new_item);
-            }
-            
-            Ok(Value::Array(Rc::new(RefCell::new(results))))
-        } else if let Value::Object(obj_rc) = left {
-            // For single object, apply mutation directly
-            self.env.push_scope();
-            self.env.set(PIPE_CONTEXT.to_string(), Value::Object(obj_rc.clone()));
-            
-            let mutation = self.evaluate(right)?;
-            
-            self.env.pop_scope();
-            
-            if let Value::Object(mutation_rc) = mutation {
-                let mut result = obj_rc.borrow().clone();
-                for (k, v) in mutation_rc.borrow().iter() {
-                    result.insert(k.clone(), v.clone());
-                }
-                Ok(Value::Object(Rc::new(RefCell::new(result))))
-            } else {
-                Ok(mutation)
-            }
-        } else {
-            Err(InterpreterError::type_error("Mutate (|=) requires an array or object"))
-        }
-    }
-
-    /// |& - Aggregate operation: reduces array to single value
-    fn apply_pipe_aggregate(&mut self, left: Value, right: &Expr) -> Result<Value, InterpreterError> {
-        // Set the array as pipe context for aggregate expressions
-        self.env.push_scope();
-        self.env.set(PIPE_CONTEXT.to_string(), left);
-        
-        let result = self.evaluate(right)?;
-        
-        self.env.pop_scope();
-        Ok(result)
-    }
-
-    /// |# - Tap operation: executes side effect, returns original value
-    fn apply_pipe_tap(&mut self, left: Value, right: &Expr) -> Result<Value, InterpreterError> {
-        self.env.push_scope();
-        self.env.set(PIPE_CONTEXT.to_string(), left.clone());
-        
-        // Execute the expression for side effects
-        let _ = self.evaluate(right)?;
-        
-        self.env.pop_scope();
-        
-        // Return the original value unchanged
-        Ok(left)
-    }
-
-    /// Deep extraction - recursively finds field in nested objects/arrays
-    fn deep_extract(&self, value: &Value, field: &str) -> Result<Value, InterpreterError> {
-        let mut results = Vec::new();
-        self.collect_deep_field(value, field, &mut results);
-        
-        // If only one result and the original was an object, return that result directly
-        if results.len() == 1 {
-            Ok(results.pop().unwrap())
-        } else if results.is_empty() {
-            Ok(Value::Null)
-        } else {
-            Ok(Value::Array(Rc::new(RefCell::new(results))))
-        }
-    }
-
-    /// Helper to recursively collect field values from nested structures
-    fn collect_deep_field(&self, value: &Value, field: &str, results: &mut Vec<Value>) {
-        match value {
-            Value::Object(obj_rc) => {
-                let obj = obj_rc.borrow();
-                // Check if this object has the field
-                if let Some(val) = obj.get(field) {
-                    results.push(val.clone());
-                }
-                // Also recurse into all values
-                for (_key, val) in obj.iter() {
-                    self.collect_deep_field(val, field, results);
-                }
-            }
-            Value::Array(arr_rc) => {
-                let arr = arr_rc.borrow();
-                for item in arr.iter() {
-                    self.collect_deep_field(item, field, results);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Evaluate a FilterPattern for pattern matching in |?
-    fn match_pattern(&self, value: &Value, pattern: &FilterPattern) -> Result<bool, InterpreterError> {
-        match pattern {
-            FilterPattern::Object(fields) => {
-                if let Value::Object(obj_rc) = value {
-                    let obj = obj_rc.borrow();
-                    
-                    for field in fields {
-                        let field_val = obj.get(&field.key);
-                        
-                        let matches = match &field.matcher {
-                            PatternMatcher::Exact(expected) => {
-                                if let Some(actual) = field_val {
-                                    self.values_equal(actual, expected)
-                                } else {
-                                    false
-                                }
-                            }
-                            PatternMatcher::Comparison(op, expected) => {
-                                if let Some(actual) = field_val {
-                                    self.compare_values(actual, op, expected)?
-                                } else {
-                                    false
-                                }
-                            }
-                            PatternMatcher::Alternatives(alternatives) => {
-                                if let Some(actual) = field_val {
-                                    alternatives.iter().any(|alt| self.values_equal(actual, alt))
-                                } else {
-                                    false
-                                }
-                            }
-                            PatternMatcher::Negated(inner) => {
-                                !self.match_field_pattern(field_val, inner)?
-                            }
-                            PatternMatcher::Any => {
-                                field_val.is_some()
-                            }
-                        };
-                        
-                        if !matches {
-                            return Ok(false);
-                        }
-                    }
-                    
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
-            }
-            FilterPattern::Negated(inner) => {
-                Ok(!self.match_pattern(value, inner)?)
-            }
-        }
-    }
-
-    /// Helper to match a field value against a pattern matcher
-    fn match_field_pattern(&self, field_val: Option<&Value>, matcher: &PatternMatcher) -> Result<bool, InterpreterError> {
-        match matcher {
-            PatternMatcher::Exact(expected) => {
-                if let Some(actual) = field_val {
-                    Ok(self.values_equal(actual, expected))
-                } else {
-                    Ok(false)
-                }
-            }
-            PatternMatcher::Comparison(op, expected) => {
-                if let Some(actual) = field_val {
-                    self.compare_values(actual, op, expected)
-                } else {
-                    Ok(false)
-                }
-            }
-            PatternMatcher::Alternatives(alternatives) => {
-                if let Some(actual) = field_val {
-                    Ok(alternatives.iter().any(|alt| self.values_equal(actual, alt)))
-                } else {
-                    Ok(false)
-                }
-            }
-            PatternMatcher::Negated(inner) => {
-                Ok(!self.match_field_pattern(field_val, inner)?)
-            }
-            PatternMatcher::Any => {
-                Ok(field_val.is_some())
-            }
-        }
-    }
-
-    /// Compare values for pattern matching
-    fn compare_values(&self, left: &Value, op: &BinaryOp, right: &Value) -> Result<bool, InterpreterError> {
-        match (left, op, right) {
-            (Value::Number(a, _), BinaryOp::Greater, Value::Number(b, _)) => Ok(a > b),
-            (Value::Number(a, _), BinaryOp::GreaterEq, Value::Number(b, _)) => Ok(a >= b),
-            (Value::Number(a, _), BinaryOp::Less, Value::Number(b, _)) => Ok(a < b),
-            (Value::Number(a, _), BinaryOp::LessEq, Value::Number(b, _)) => Ok(a <= b),
-            (a, BinaryOp::Eq, b) => Ok(self.values_equal(a, b)),
-            (a, BinaryOp::NotEq, b) => Ok(!self.values_equal(a, b)),
-            _ => Ok(false),
-        }
-    }
-
-    /// Check if a value is truthy
-    #[allow(dead_code)]
-    fn is_truthy(&self, value: &Value) -> bool {
-        match value {
-            Value::Null => false,
-            Value::Bool(b) => *b,
-            Value::Number(n, _) => *n != 0.0,
-            Value::String(s) => !s.is_empty(),
-            Value::Array(a) => !a.borrow().is_empty(),
-            Value::Object(o) => !o.borrow().is_empty(),
-            Value::Function(_) => true,
-            Value::Module(_) => true,
-        }
-    }
-
-    /// Evaluate an aggregate expression on an array
-    fn evaluate_aggregate(&mut self, arr: &Value, agg_expr: &AggregateExpr) -> Result<Value, InterpreterError> {
-        if let Value::Array(items_rc) = arr {
-            let items = items_rc.borrow();
-            
-            match agg_expr {
-                AggregateExpr::Method(method) => {
-                    match method.as_str() {
-                        "length" | "count" => Ok(Value::Number(items.len() as f64, false)),
-                        "first" => Ok(items.first().cloned().unwrap_or(Value::Null)),
-                        "last" => Ok(items.last().cloned().unwrap_or(Value::Null)),
-                        "sum" => {
-                            let total: f64 = items.iter().filter_map(|v| {
-                                if let Value::Number(n, _) = v { Some(*n) } else { None }
-                            }).sum();
-                            Ok(Value::Number(total, true))
-                        }
-                        "avg" => {
-                            let nums: Vec<f64> = items.iter().filter_map(|v| {
-                                if let Value::Number(n, _) = v { Some(*n) } else { None }
-                            }).collect();
-                            if nums.is_empty() {
-                                Ok(Value::Number(0.0, true))
-                            } else {
-                                Ok(Value::Number(nums.iter().sum::<f64>() / nums.len() as f64, true))
-                            }
-                        }
-                        "min" => {
-                            let min = items.iter().filter_map(|v| {
-                                if let Value::Number(n, _) = v { Some(*n) } else { None }
-                            }).fold(f64::INFINITY, f64::min);
-                            if min == f64::INFINITY {
-                                Ok(Value::Null)
-                            } else {
-                                Ok(Value::Number(min, true))
-                            }
-                        }
-                        "max" => {
-                            let max = items.iter().filter_map(|v| {
-                                if let Value::Number(n, _) = v { Some(*n) } else { None }
-                            }).fold(f64::NEG_INFINITY, f64::max);
-                            if max == f64::NEG_INFINITY {
-                                Ok(Value::Null)
-                            } else {
-                                Ok(Value::Number(max, true))
-                            }
-                        }
-                        _ => Err(InterpreterError::invalid_operation(format!("Unknown aggregate method: {}", method))),
-                    }
-                }
-                AggregateExpr::MethodWithPath(method, path) => {
-                    // Extract values at the path from each item
-                    let values: Vec<f64> = items.iter().filter_map(|item| {
-                        self.extract_path_value(item, path)
-                            .and_then(|v| if let Value::Number(n, _) = v { Some(n) } else { None })
-                    }).collect();
-                    
-                    match method.as_str() {
-                        "sum" => Ok(Value::Number(values.iter().sum(), true)),
-                        "avg" => {
-                            if values.is_empty() {
-                                Ok(Value::Number(0.0, true))
-                            } else {
-                                Ok(Value::Number(values.iter().sum::<f64>() / values.len() as f64, true))
-                            }
-                        }
-                        "min" => {
-                            values.iter().copied().fold(None, |min, v| {
-                                Some(min.map_or(v, |m: f64| m.min(v)))
-                            }).map_or(Ok(Value::Null), |n| Ok(Value::Number(n, true)))
-                        }
-                        "max" => {
-                            values.iter().copied().fold(None, |max, v| {
-                                Some(max.map_or(v, |m: f64| m.max(v)))
-                            }).map_or(Ok(Value::Null), |n| Ok(Value::Number(n, true)))
-                        }
-                        "first" => {
-                            for item in items.iter() {
-                                if let Some(val) = self.extract_path_value(item, path) {
-                                    return Ok(val);
-                                }
-                            }
-                            Ok(Value::Null)
-                        }
-                        "last" => {
-                            let mut last = Value::Null;
-                            for item in items.iter() {
-                                if let Some(val) = self.extract_path_value(item, path) {
-                                    last = val;
-                                }
-                            }
-                            Ok(last)
-                        }
-                        _ => Err(InterpreterError::invalid_operation(format!("Unknown aggregate method: {}", method))),
-                    }
-                }
-                AggregateExpr::Collect(path) => {
-                    let mut collected = Vec::new();
-                    for item in items.iter() {
-                        if let Some(val) = self.extract_path_value(item, path) {
-                            collected.push(val);
-                        }
-                    }
-                    Ok(Value::Array(Rc::new(RefCell::new(collected))))
-                }
-            }
-        } else {
-            Err(InterpreterError::type_error("Aggregate requires array"))
-        }
-    }
-
-    /// Extract a value at a path from an object
-    fn extract_path_value(&self, value: &Value, path: &[String]) -> Option<Value> {
-        let mut current = value.clone();
-        for segment in path {
-            match current {
-                Value::Object(obj_rc) => {
-                    let borrowed = obj_rc.borrow();
-                    if let Some(val) = borrowed.get(segment) {
-                        current = val.clone();
-                    } else {
-                        return None;
-                    }
-                }
-                _ => return None,
-            }
-        }
-        Some(current)
     }
 }
 

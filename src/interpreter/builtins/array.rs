@@ -373,7 +373,7 @@ pub fn builtin_find(
     require_args!(args, 2, "find");
     if let (Value::Array(arr), Value::Function(_)) = (&args[0], &args[1]) {
         for item in arr.borrow().iter() {
-            if let Value::Bool(true) = call_fn(&args[1], &[item.clone()])? {
+            if let Value::Bool(true) = call_fn(&args[1], std::slice::from_ref(item))? {
                 return Ok(item.clone());
             }
         }
@@ -392,7 +392,7 @@ pub fn builtin_find_index(
     require_args!(args, 2, "find_index");
     if let (Value::Array(arr), Value::Function(_)) = (&args[0], &args[1]) {
         for (i, item) in arr.borrow().iter().enumerate() {
-            if let Value::Bool(true) = call_fn(&args[1], &[item.clone()])? {
+            if let Value::Bool(true) = call_fn(&args[1], std::slice::from_ref(item))? {
                 return Ok(Value::Number(i as f64, false));
             }
         }
@@ -429,7 +429,7 @@ pub fn builtin_every(
     require_args!(args, 2, "every");
     if let (Value::Array(arr), Value::Function(_)) = (&args[0], &args[1]) {
         for item in arr.borrow().iter() {
-            if let Value::Bool(false) = call_fn(&args[1], &[item.clone()])? {
+            if let Value::Bool(false) = call_fn(&args[1], std::slice::from_ref(item))? {
                 return Ok(Value::Bool(false));
             }
         }
@@ -448,7 +448,7 @@ pub fn builtin_some(
     require_args!(args, 2, "some");
     if let (Value::Array(arr), Value::Function(_)) = (&args[0], &args[1]) {
         for item in arr.borrow().iter() {
-            if let Value::Bool(true) = call_fn(&args[1], &[item.clone()])? {
+            if let Value::Bool(true) = call_fn(&args[1], std::slice::from_ref(item))? {
                 return Ok(Value::Bool(true));
             }
         }
@@ -515,7 +515,7 @@ pub fn builtin_flat_map(
     if let (Value::Array(arr), Value::Function(_)) = (&args[0], &args[1]) {
         let mut result = Vec::new();
         for item in arr.borrow().iter() {
-            let mapped = call_fn(&args[1], &[item.clone()])?;
+            let mapped = call_fn(&args[1], std::slice::from_ref(item))?;
             match mapped {
                 Value::Array(inner) => {
                     result.extend(inner.borrow().iter().cloned());

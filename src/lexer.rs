@@ -112,8 +112,6 @@ pub fn lexer<'a>()
 
     let ident = text::ident().map(|s: &str| match s {
         "let" => Token::Let,
-        "filter" => Token::Filter,
-        "map" => Token::Map,
         "for" => Token::For,
         "in" => Token::In,
         "if" => Token::If,
@@ -131,11 +129,6 @@ pub fn lexer<'a>()
         _ => Token::Ident(s.to_string()),
     });
 
-    // Colon followed by identifier for method calls like :where(), :select()
-    let colon_method = just(':')
-        .ignore_then(text::ident())
-        .map(|s: &str| Token::ColonIdent(s.to_string()));
-
     let multi_char_operators = choice((
         just("==").to(Token::Eq),
         just("!=").to(Token::NotEq),
@@ -143,14 +136,6 @@ pub fn lexer<'a>()
         just("<=").to(Token::LessEq),
         just("&&").to(Token::And),
         just("||").to(Token::Or),
-        // New pipe operators
-        just("|?").to(Token::PipeFilter),
-        just("|>").to(Token::PipeMap),
-        just("|=").to(Token::PipeMutate),
-        just("|&").to(Token::PipeAggregate),
-        just("|#").to(Token::PipeTap),
-        // Three dots for spread (must come before DotDot)
-        just("...").to(Token::DotDotDot),
         just("..").to(Token::DotDot),
         just("=>").to(Token::Arrow),
         just("?.").to(Token::QuestionDot),
@@ -195,7 +180,6 @@ pub fn lexer<'a>()
         .or(string)
         .or(template_literal)
         .or(ident)
-        .or(colon_method)
         .or(operators)
         .map_with(|tok, e| (tok, e.span()))
         .padded_by(comment.repeated())

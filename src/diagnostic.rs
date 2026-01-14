@@ -67,14 +67,6 @@ impl Label {
             style: LabelStyle::Primary,
         }
     }
-
-    pub fn secondary(span: Span, message: impl Into<String>) -> Self {
-        Self {
-            span,
-            message: message.into(),
-            style: LabelStyle::Secondary,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]

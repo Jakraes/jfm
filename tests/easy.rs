@@ -168,14 +168,6 @@ fn test_zero_and_negative_numbers() {
 }
 
 #[test]
-fn test_empty_array_length() {
-    let source = "let arr = []; arr.length;";
-    let root = Value::Null;
-    let result = parse_and_run(source, root).unwrap().unwrap();
-    assert_eq!(result, Value::Number(0.0, false));
-}
-
-#[test]
 fn test_empty_object_literal() {
     let source = "let obj = {}; obj;";
     let root = Value::Null;

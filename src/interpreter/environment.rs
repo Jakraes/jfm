@@ -26,15 +26,6 @@ impl Environment {
         }
     }
 
-    pub fn with_parent(parent: Rc<Environment>) -> Self {
-        let mut scopes = Vec::with_capacity(4);
-        scopes.push(HashMap::new());
-        Self {
-            scopes: Rc::new(RefCell::new(scopes)),
-            parent: Some(parent),
-        }
-    }
-
     /// Push a new scope onto the stack. Use this at the start of a loop iteration
     /// or block scope instead of creating a new Environment.
     pub fn push_scope(&self) {
@@ -55,20 +46,6 @@ impl Environment {
         let mut scopes = self.scopes.borrow_mut();
         if let Some(current_scope) = scopes.last_mut() {
             current_scope.insert(name, value);
-        }
-    }
-    
-    /// Set a variable in the outer (parent) scope, or root if only one scope.
-    /// This is used by `as` bindings to persist past temporary scopes.
-    pub fn set_outer(&self, name: String, value: Value) {
-        let mut scopes = self.scopes.borrow_mut();
-        let len = scopes.len();
-        if len >= 2 {
-            // Set in the second-to-last scope (outer scope)
-            scopes[len - 2].insert(name, value);
-        } else if let Some(scope) = scopes.first_mut() {
-            // Only one scope, set in root
-            scope.insert(name, value);
         }
     }
 
@@ -110,12 +87,6 @@ impl Environment {
         } else {
             false
         }
-    }
-
-    /// Returns the number of scopes in this environment.
-    #[allow(dead_code)]
-    pub fn scope_depth(&self) -> usize {
-        self.scopes.borrow().len()
     }
 
     /// Get all bindings from all scopes (for module exports).

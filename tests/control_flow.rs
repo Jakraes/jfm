@@ -1,24 +1,5 @@
 use jfm::interpreter::parse_and_run;
 use jfm::Value;
-use std::rc::Rc;
-use std::cell::RefCell;
-use indexmap::IndexMap;
-
-#[allow(dead_code)]
-fn make_test_root() -> Value {
-    let mut root = IndexMap::new();
-    let mut users = Vec::new();
-    
-    for (name, age) in [("Alice", 25.0), ("Bob", 30.0), ("Charlie", 35.0)] {
-        let mut user = IndexMap::new();
-        user.insert("name".to_string(), Value::String(Rc::from(name)));
-        user.insert("age".to_string(), Value::Number(age, false));
-        users.push(Value::Object(Rc::new(RefCell::new(user))));
-    }
-    
-    root.insert("users".to_string(), Value::Array(Rc::new(RefCell::new(users))));
-    Value::Object(Rc::new(RefCell::new(root)))
-}
 
 #[test]
 fn test_while_loop_basic() {

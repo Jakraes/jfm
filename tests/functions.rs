@@ -417,37 +417,7 @@ fn test_group_by_number_field() {
     assert!(obj.contains_key("35"));
 }
 
-// =============================================================================
-// PRINT FUNCTION TESTS
-// =============================================================================
-
-#[test]
-fn test_print_returns_null() {
-    let source = r#"print("test");"#;
-    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    assert!(matches!(result, Value::Null));
-}
-
-#[test]
-fn test_print_multiple_values() {
-    let source = r#"print("a", 1, true, null);"#;
-    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    assert!(matches!(result, Value::Null));
-}
-
-#[test]
-fn test_print_no_args() {
-    let source = "print();";
-    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    assert!(matches!(result, Value::Null));
-}
-
-#[test]
-fn test_print_complex_types() {
-    let source = r#"print([1, 2], {"x": 1});"#;
-    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    assert!(matches!(result, Value::Null));
-}
+// Note: print() tests are in io.rs
 
 // =============================================================================
 // COMBINED FUNCTION TESTS

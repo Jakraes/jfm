@@ -2,7 +2,7 @@ use indexmap::IndexMap;
 use std::cell::{Ref, RefCell};
 use std::rc::Rc;
 
-use crate::ast::{Stmt, FunctionParam};
+use crate::ast::Stmt;
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -85,7 +85,7 @@ impl Value {
 
 #[derive(Debug, Clone)]
 pub struct Function {
-    pub params: Vec<FunctionParam>,
+    pub params: Vec<Rc<str>>,
     pub body_expr: Option<Box<crate::ast::Expr>>,
     pub body_stmts: Option<Vec<Stmt>>,
 }
