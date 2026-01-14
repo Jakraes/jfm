@@ -11,20 +11,16 @@
 
 mod array;
 mod generators;
-mod io;
-mod math;
+mod misc;
 mod object;
 mod string;
-mod types;
 
 // Re-export all builtins
 pub use array::*;
 pub use generators::*;
-pub use io::*;
-pub use math::*;
+pub use misc::*;
 pub use object::*;
 pub use string::*;
-pub use types::*;
 
 // Types used by the exported macros - must be in scope here
 #[allow(unused_imports)]

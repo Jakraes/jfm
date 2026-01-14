@@ -41,7 +41,15 @@ pub enum ObjectEntry {
     PathField { path: Vec<String>, value: Expr },
     /// Shorthand property like `{ name }` meaning `{ name: name }`
     Shorthand { name: String },
+    /// Projection shorthand like `{ .name }` meaning `{ name: @.name }`
+    Projection { field: String },
     Spread(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Param {
+    pub name: Rc<str>,
+    pub default: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +61,7 @@ pub struct Expr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Let { name: Rc<str>, value: Expr },
+    Const { name: Rc<str>, value: Expr },
     Expr(Expr),
     For { var: Rc<str>, iterable: Expr, body: Vec<Stmt> },
     While { condition: Expr, body: Vec<Stmt> },
@@ -60,7 +69,7 @@ pub enum Stmt {
     Return(Option<Expr>),
     Break,
     Continue,
-    Function { name: Rc<str>, params: Vec<Rc<str>>, body: Vec<Stmt> },
+    Function { name: Rc<str>, params: Vec<Param>, body: Vec<Stmt> },
     Block(Vec<Stmt>),
 }
 
@@ -80,6 +89,10 @@ pub enum ExprKind {
         array: Box<Expr>,
         index: Box<Expr>,
     },
+    DeepFieldAccess {
+        object: Box<Expr>,
+        field: String,
+    },
     Binary {
         left: Box<Expr>,
         op: BinaryOp,
@@ -92,6 +105,11 @@ pub enum ExprKind {
     Pipe {
         left: Box<Expr>,
         right: Box<Expr>,
+    },
+    PipeUpdate {
+        left: Box<Expr>,
+        path: Box<Expr>,
+        value: Box<Expr>,
     },
     Call {
         name: Rc<str>,
@@ -111,7 +129,7 @@ pub enum ExprKind {
     },
     Spread(Box<Expr>),
     Lambda {
-        params: Vec<Rc<str>>,
+        params: Vec<Param>,
         body: Box<Expr>,
     },
     Range {
@@ -167,6 +185,7 @@ pub enum ExprKind {
 #[derive(Debug, Clone, PartialEq)]
 pub enum MatchPattern {
     Literal(Value),
+    Range { start: Box<Expr>, end: Box<Expr> },
     Wildcard,
 }
 

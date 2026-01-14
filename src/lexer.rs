@@ -1,6 +1,81 @@
-use chumsky::prelude::*;
+use chumsky::{prelude::*, text};
 
-use crate::token::Token;
+#[derive(Debug, Clone, PartialEq)]
+pub enum Token {
+    // Keywords
+    Let,
+    Const,
+    For,
+    In,
+    If,
+    Else,
+    Return,
+    While,
+    Break,
+    Continue,
+    Fn,
+    Match,
+    As,
+
+    // Literals and Identifiers
+    Ident(String),
+    Number(f64, bool),
+    String(String),
+    TemplateFull(String),
+    True,
+    False,
+    Null,
+    At,
+
+    // Arithmetic Operators
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Caret,
+
+    // Comparison Operators
+    Eq,
+    NotEq,
+    Greater,
+    Less,
+    GreaterEq,
+    LessEq,
+
+    // Logical Operators
+    And,
+    Or,
+    Bang,
+
+    // Special Operators
+    Pipe,
+    PipeUpdate,  // |~
+    Assign,
+    PlusAssign,   // +=
+    MinusAssign,  // -=
+    MulAssign,    // *=
+    DivAssign,    // /=
+    ModAssign,    // %=
+    DotDot,
+    Arrow,
+    Comma,
+    Colon,
+    DoubleColon,
+    QuestionDot,
+    Question,
+    NullCoalesce,
+
+    // Delimiters
+    Dot,
+    Semicolon,
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
+    LBracket,
+    RBracket,
+}
 
 pub fn lexer<'a>()
 -> impl Parser<'a, &'a str, Vec<(Token, SimpleSpan)>, extra::Err<Simple<'a, char>>> {
@@ -112,6 +187,7 @@ pub fn lexer<'a>()
 
     let ident = text::ident().map(|s: &str| match s {
         "let" => Token::Let,
+        "const" => Token::Const,
         "for" => Token::For,
         "in" => Token::In,
         "if" => Token::If,
@@ -142,6 +218,12 @@ pub fn lexer<'a>()
         just("??").to(Token::NullCoalesce),
         just('?').to(Token::Question),
         just("::").to(Token::DoubleColon),
+        just("|~").to(Token::PipeUpdate),
+        just("+=").to(Token::PlusAssign),
+        just("-=").to(Token::MinusAssign),
+        just("*=").to(Token::MulAssign),
+        just("/=").to(Token::DivAssign),
+        just("%=").to(Token::ModAssign),
     ));
 
     let single_char_operators = choice((
@@ -171,21 +253,37 @@ pub fn lexer<'a>()
 
     let operators = multi_char_operators.or(single_char_operators);
 
-    // Line comments: // until end of line
-    let comment = just("//")
-        .then(any().and_is(just('\n').not()).repeated())
-        .padded();
+    // Single-line comments: # or // until end of line
+    let line_comment = choice((
+        just('#').ignored(),
+        just('/').then(just('/')).ignored(),
+    ))
+        .ignore_then(any().and_is(just('\n').not()).repeated())
+        .then_ignore(just('\n').or_not())
+        .ignored();
+    
+    // Multi-line comments: /* ... */
+    let multi_line_comment = just('/').then(just('*'))
+        .ignore_then(any().and_is(just('*').then(just('/')).not()).repeated())
+        .then_ignore(just('*'))
+        .then_ignore(just('/'))
+        .ignored();
+    
+    let comment = line_comment.or(multi_line_comment);
 
-    let token = number
-        .or(string)
-        .or(template_literal)
-        .or(ident)
-        .or(operators)
+    let token = choice((
+        number,
+        string,
+        template_literal,
+        ident,
+        operators,
+    ))
         .map_with(|tok, e| (tok, e.span()))
-        .padded_by(comment.repeated())
-        .padded();
+        .padded_by(choice((comment, any().filter(|c: &char| c.is_whitespace()).ignored())).repeated());
 
-    token.repeated().collect().then_ignore(end())
+    choice((comment, any().filter(|c: &char| c.is_whitespace()).ignored())).repeated()
+        .ignore_then(token.repeated().collect())
+        .then_ignore(end())
 }
 
 #[cfg(test)]
@@ -629,5 +727,52 @@ let test_name = users | .name == "Bob";"#;
                 Token::Ident("g".to_string())
             ]
         );
+    }
+
+    #[test]
+    fn test_hash_comment() {
+        let result = lexer().parse("# comment\nlet x = 5;");
+        if let Some(tokens) = result.output() {
+            let token_vec: Vec<Token> = tokens.iter().map(|(tok, _)| tok.clone()).collect();
+            assert_eq!(
+                token_vec,
+                vec![
+                    Token::Let,
+                    Token::Ident("x".to_string()),
+                    Token::Assign,
+                    Token::Number(5.0, false),
+                    Token::Semicolon
+                ]
+            );
+        } else {
+            let errors: Vec<_> = result.errors().collect();
+            panic!("Lexer failed with errors: {:?}", errors);
+        }
+    }
+
+    #[test]
+    fn test_multi_line_comment() {
+        // Test without space after comment
+        let result1 = lexer().parse("/* comment */let x = 5;");
+        assert!(result1.output().is_some(), "Should parse comment without space");
+        
+        // Test with space after comment
+        let result2 = lexer().parse("/* comment */ let x = 5;");
+        if let Some(tokens) = result2.output() {
+            let token_vec: Vec<Token> = tokens.iter().map(|(tok, _)| tok.clone()).collect();
+            assert_eq!(
+                token_vec,
+                vec![
+                    Token::Let,
+                    Token::Ident("x".to_string()),
+                    Token::Assign,
+                    Token::Number(5.0, false),
+                    Token::Semicolon
+                ]
+            );
+        } else {
+            let errors: Vec<_> = result2.errors().collect();
+            panic!("Lexer failed with errors: {:?}", errors);
+        }
     }
 }

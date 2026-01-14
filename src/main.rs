@@ -1,11 +1,8 @@
 use clap::Parser;
-use jfm::cli::{generate_completions, Args, Commands};
-use jfm::config::AppConfig;
-use jfm::convert::json_to_value;
+use jfm::cli::{generate_completions, AppConfig, Args, Commands};
 use jfm::diagnostic::render_diagnostics;
-use jfm::format::value_to_json_string;
+use jfm::format::{json_to_value, parse_json, value_to_json_string};
 use jfm::interpreter;
-use jfm::json;
 use jfm::Value;
 use owo_colors::OwoColorize;
 use std::cell::RefCell;
@@ -61,7 +58,7 @@ fn main() {
         return;
     }
 
-    let root_value = match json::parse_json(&json_str) {
+    let root_value = match parse_json(&json_str) {
         Ok(val) => {
             verbose_log(&config, "Successfully parsed JSON");
             json_to_value(val)
@@ -313,7 +310,7 @@ fn execute_streaming(
                 continue;
             }
 
-            match json::parse_json(trimmed) {
+            match parse_json(trimmed) {
                 Ok(json_val) => {
                     let root_value = json_to_value(json_val);
                     match interpreter::parse_and_run(query_str, root_value) {
@@ -330,7 +327,7 @@ fn execute_streaming(
     } else {
         verbose_log(config, "Processing as JSON array stream");
 
-        match json::parse_json(json_str) {
+        match parse_json(json_str) {
             Ok(serde_json::Value::Array(array)) => {
                 for item in array {
                     if output_count >= limit {

@@ -1,7 +1,6 @@
-use crate::ast::{ArrayElement, BinaryOp, Expr, ExprKind, ObjectEntry, Stmt, UnaryOp};
-use crate::value::{Function, Value};
+use crate::ast::{ArrayElement, BinaryOp, Expr, ExprKind, ObjectEntry, Stmt, UnaryOp, Param};
+use crate::value::{deep_equals, values_equal, value_to_string, Function, Value};
 use super::builtins;
-use super::control_flow::ControlFlow;
 use super::environment::Environment;
 use super::error::InterpreterError;
 use super::parser::TokenParser;
@@ -15,6 +14,16 @@ pub const PIPE_CONTEXT: &str = "@";
 /// Variable name for the root JSON value
 pub const ROOT_CONTEXT: &str = "root";
 
+/// Control flow for statement execution
+#[derive(Debug, Clone)]
+pub enum ControlFlow {
+    Next,
+    Value(Value),
+    Return(Value),
+    Break,
+    Continue,
+}
+
 /// Represents a segment in an access path for nested field/index operations.
 /// For example, `.items[0].active` would be represented as:
 /// `[Field("items"), Index(0), Field("active")]`
@@ -22,6 +31,7 @@ pub const ROOT_CONTEXT: &str = "root";
 enum AccessPathSegment {
     Field(String),
     Index(usize),
+    NegativeIndex(i64),
 }
 
 pub struct Interpreter {
@@ -93,6 +103,18 @@ impl Interpreter {
         match statement {
             Stmt::Let { name, value } => {
                 let val = self.evaluate(value)?;
+                self.env.set(name.to_string(), val);
+                Ok(ControlFlow::Next)
+            }
+            Stmt::Const { name, value } => {
+                let val = self.evaluate(value)?;
+                // Check if const already exists (immutable)
+                if self.env.get(name.as_ref()).is_some() {
+                    return Err(InterpreterError::invalid_operation(format!(
+                        "Cannot redeclare const '{}'",
+                        name
+                    )));
+                }
                 self.env.set(name.to_string(), val);
                 Ok(ControlFlow::Next)
             }
@@ -208,10 +230,21 @@ impl Interpreter {
         match &expr.kind {
             ExprKind::Literal(val) => Ok(val.clone()),
 
-            ExprKind::Identifier(name) => self
-                .env
-                .get(name.as_ref())
-                .ok_or_else(|| InterpreterError::undefined_variable_at(name.to_string(), expr.span)),
+            ExprKind::Identifier(name) => {
+                // First try environment
+                if let Some(val) = self.env.get(name.as_ref()) {
+                    Ok(val)
+                } else if let Some(pipe_val) = self.env.get(PIPE_CONTEXT) {
+                    // If not in environment and we're in pipe context, try implicit @ lookup
+                    // This handles expressions like `age >= 18` in `{ adult: age >= 18 }`
+                    match self.get_field(&pipe_val, name.as_ref()) {
+                        Ok(field_val) if !matches!(field_val, Value::Null) => Ok(field_val),
+                        _ => Err(InterpreterError::undefined_variable_at(name.to_string(), expr.span)),
+                    }
+                } else {
+                    Err(InterpreterError::undefined_variable_at(name.to_string(), expr.span))
+                }
+            }
 
             ExprKind::FieldAccess { object, field } => {
                 let obj = self.evaluate(object)?;
@@ -231,6 +264,16 @@ impl Interpreter {
                 let arr = self.evaluate(array)?;
                 let idx = self.evaluate(index)?;
                 self.get_index(&arr, &idx)
+            }
+
+            ExprKind::DeepFieldAccess { object, field } => {
+                let obj = self.evaluate(object)?;
+                let results = self.deep_find_all(&obj, field);
+                if results.len() == 1 {
+                    Ok(results[0].clone())
+                } else {
+                    Ok(Value::Array(Rc::new(RefCell::new(results))))
+                }
             }
 
             ExprKind::Binary { left, op, right } => {
@@ -347,6 +390,35 @@ impl Interpreter {
                 result
             }
 
+            ExprKind::PipeUpdate { left, path, value } => {
+                // Update pipe: left |~ path => value
+                // Evaluate left to get the object/array to update
+                let left_val = self.evaluate(left)?;
+                
+                // Extract path segments from the path expression (e.g., .field or [0])
+                let path_segments = extract_path_segments(path)
+                    .ok_or_else(|| InterpreterError::type_error("PipeUpdate path must be a field access or array index"))?;
+                
+                // Get the current value at the path (for @ context)
+                let current_path_val = self.get_nested_path(&left_val, &path_segments)?;
+                
+                // Set @ to the current path value before evaluating the value expression
+                self.env.push_scope();
+                self.env.set(PIPE_CONTEXT.to_string(), current_path_val.clone());
+                
+                // Evaluate the new value (which can use @)
+                let new_val = self.evaluate(value)?;
+                
+                // Restore scope
+                self.env.pop_scope();
+                
+                // Clone the value to make it mutable, then update it
+                let updated = left_val.clone();
+                self.set_nested_path(&updated, &path_segments, new_val.clone())?;
+                
+                Ok(updated)
+            }
+
             ExprKind::Grouped(expr) => self.evaluate(expr),
 
             ExprKind::Array { elements } => {
@@ -404,8 +476,24 @@ impl Interpreter {
                         }
                         ObjectEntry::Shorthand { name } => {
                             // Handle shorthand like { name } meaning { name: name }
-                            let val = self.env.get(name.as_str())
-                                .ok_or_else(|| InterpreterError::undefined_variable(name.clone()))?;
+                            // In pipe context, prefer @.name (implicit @) over variable lookup
+                            let val = if let Some(pipe_val) = self.env.get(PIPE_CONTEXT) {
+                                // Try to get field from pipe context first (implicit @ in projections)
+                                match self.get_field(&pipe_val, &name) {
+                                    Ok(field_val) if !matches!(field_val, Value::Null) => field_val,
+                                    _ => {
+                                        // Fall back to variable lookup (regular shorthand)
+                                        self.env.get(name.as_str())
+                                            .ok_or_else(|| InterpreterError::undefined_variable(name.clone()))?
+                                            .clone()
+                                    }
+                                }
+                            } else {
+                                // No pipe context, use variable lookup
+                                self.env.get(name.as_str())
+                                    .ok_or_else(|| InterpreterError::undefined_variable(name.clone()))?
+                                    .clone()
+                            };
                             if let Value::Object(map_rc) = &result {
                                 map_rc.borrow_mut().insert(name.clone(), val);
                             }
@@ -422,6 +510,21 @@ impl Interpreter {
                                 }
                                 _ => return Err(InterpreterError::type_error("Spread in object requires an object")),
                             }
+                        }
+                        ObjectEntry::Projection { field } => {
+                             // Projection { .name } -> { name: @.name }
+                             // Only works if PIPE_CONTEXT is available
+                             if let Some(pipe_val) = self.env.get(PIPE_CONTEXT) {
+                                 let val = match self.get_field(&pipe_val, field) {
+                                     Ok(v) => v,
+                                     Err(_) => Value::Null, // Or undefined variable error? Usually projection allows nulls.
+                                 };
+                                 if let Value::Object(map_rc) = &result {
+                                     map_rc.borrow_mut().insert(field.clone(), val);
+                                 }
+                             } else {
+                                 return Err(InterpreterError::undefined_variable(field.clone()));
+                             }
                         }
                     }
                 }
@@ -503,7 +606,7 @@ impl Interpreter {
                         TemplatePart::Literal(s) => result.push_str(s),
                         TemplatePart::Interpolation(expr) => {
                             let val = self.evaluate(expr)?;
-                            result.push_str(&self.value_to_string(&val));
+                            result.push_str(&value_to_string(&val));
                         }
                     }
                 }
@@ -520,8 +623,20 @@ impl Interpreter {
                             return self.evaluate(result_expr);
                         }
                         MatchPattern::Literal(pattern_val) => {
-                            if self.values_equal(&val, pattern_val) {
+                            if values_equal(&val, pattern_val) {
                                 return self.evaluate(result_expr);
+                            }
+                        }
+                        MatchPattern::Range { start, end } => {
+                            // Range pattern: check if value is within range (inclusive)
+                            let start_val = self.evaluate(start)?;
+                            let end_val = self.evaluate(end)?;
+                            
+                            if let (Value::Number(val_num, _), Value::Number(start_num, _), Value::Number(end_num, _)) = 
+                                (&val, &start_val, &end_val) {
+                                if *val_num >= *start_num && *val_num <= *end_num {
+                                    return self.evaluate(result_expr);
+                                }
                             }
                         }
                     }
@@ -625,7 +740,7 @@ impl Interpreter {
             }
             ExprKind::FieldAccess { object, field } => {
                 // Check if this is a nested path starting from Null (short field/index access)
-                if let Some(path) = self.extract_path_segments(target) {
+                if let Some(path) = extract_path_segments(target) {
                     // This is a short access chain like .profile.age or .items[0].name
                     if let Some(it_val) = self.env.get(PIPE_CONTEXT) {
                         self.set_nested_path(&it_val, &path, value.clone())?;
@@ -651,7 +766,7 @@ impl Interpreter {
             }
             ExprKind::ArrayIndex { array, index } => {
                 // Check if this is a nested path starting from Null (short field/index access)
-                if let Some(path) = self.extract_path_segments(target) {
+                if let Some(path) = extract_path_segments(target) {
                     // This is a short access chain like .items[0] or .data[0].value
                     if let Some(it_val) = self.env.get(PIPE_CONTEXT) {
                         self.set_nested_path(&it_val, &path, value.clone())?;
@@ -694,7 +809,11 @@ impl Interpreter {
         if let ExprKind::ArrayIndex { array, index } = &right.kind
             && matches!(array.kind, ExprKind::Literal(Value::Null)) {
                 let idx = self.evaluate(index)?;
-                return self.get_index(&left, &idx);
+                let val = self.get_index(&left, &idx)?;
+                if matches!(left, Value::Array(_)) {
+                    return Ok(Value::Array(Rc::new(RefCell::new(vec![val]))));
+                }
+                return Ok(val);
             }
         
         // Check if the right side is `@ as name | expr` - like a named lambda
@@ -767,10 +886,10 @@ impl Interpreter {
         // Check if expression is a binary operation on a short field/index access (.field + 2, .profile.age + 5, or .items[0] + 1)
         // These should automatically mutate the field and return the modified object
         // This makes `.id + 2` equivalent to `.id += 2` in pipe context
-        let mutation_info = self.get_pipe_mutation_info(right);
-        
+        let mutation_info = get_pipe_mutation_info(right);
+
         // Check if expression is an assignment on a short field/index access (.field = value, .profile.age = value, or .items[0] = value)
-        let assignment_path = self.get_pipe_assignment_path(right);
+        let assignment_path = get_pipe_assignment_path(right);
         
         match left {
             Value::Array(items_rc) => {
@@ -935,7 +1054,7 @@ impl Interpreter {
     }
     
     /// Evaluate a pipe with a lambda - handles both map and filter based on return type
-    fn eval_pipe_with_lambda(&mut self, left: Value, params: &[Rc<str>], body: &Expr) -> Result<Value, InterpreterError> {
+    fn eval_pipe_with_lambda(&mut self, left: Value, params: &[Param], body: &Expr) -> Result<Value, InterpreterError> {
         match left {
             Value::Array(items_rc) => {
                 let items = items_rc.borrow();
@@ -945,7 +1064,7 @@ impl Interpreter {
                     self.env.push_scope();
                     
                     if !params.is_empty() {
-                        self.env.set(params[0].to_string(), item.clone());
+                        self.env.set(params[0].name.to_string(), item.clone());
                     }
                     self.env.set(PIPE_CONTEXT.to_string(), item.clone());
                     
@@ -969,7 +1088,7 @@ impl Interpreter {
                 self.env.push_scope();
                 
                 if !params.is_empty() {
-                    self.env.set(params[0].to_string(), other.clone());
+                    self.env.set(params[0].name.to_string(), other.clone());
                 }
                 self.env.set(PIPE_CONTEXT.to_string(), other);
                 
@@ -1031,67 +1150,81 @@ impl Interpreter {
             _ => "<expression>".to_string(),
         }
     }
+}
 
-    /// Extract the field path from a nested field access expression starting from Null
-    /// e.g., `.profile.age` returns Some([Field("profile"), Field("age")])
-    /// e.g., `.items[0].active` returns Some([Field("items"), Index(0), Field("active")])
-    fn extract_path_segments(&self, expr: &Expr) -> Option<Vec<AccessPathSegment>> {
-        let mut path = Vec::new();
-        let mut current = expr;
-        
-        loop {
-            match &current.kind {
-                ExprKind::FieldAccess { object, field } => {
-                    path.push(AccessPathSegment::Field(field.clone()));
-                    current = object;
+/// Extract path segments from an expression (for short field/index access like .field or .items[0])
+fn extract_path_segments(expr: &Expr) -> Option<Vec<AccessPathSegment>> {
+    fn extract_recursive(expr: &Expr, segments: &mut Vec<AccessPathSegment>) -> bool {
+        match &expr.kind {
+            ExprKind::Literal(Value::Null) => true, // Base case for short access
+            ExprKind::FieldAccess { object, field } => {
+                if extract_recursive(object, segments) {
+                    segments.push(AccessPathSegment::Field(field.clone()));
+                    true
+                } else {
+                    false
                 }
-                ExprKind::ArrayIndex { array, index } => {
-                    // Try to evaluate index as a constant number
-                    if let ExprKind::Literal(Value::Number(n, _)) = &index.kind {
-                        path.push(AccessPathSegment::Index(*n as usize));
-                        current = array;
-                    } else {
-                        return None; // Non-constant index, can't handle statically
+            }
+            ExprKind::ArrayIndex { array, index } => {
+                match &index.kind {
+                    ExprKind::Literal(Value::Number(n, _)) => {
+                        if extract_recursive(array, segments) {
+                            segments.push(AccessPathSegment::Index(*n as usize));
+                            true
+                        } else {
+                            false
+                        }
                     }
+                    ExprKind::Unary { op: UnaryOp::Neg, expr } => {
+                        if let ExprKind::Literal(Value::Number(n, _)) = &expr.kind {
+                             if extract_recursive(array, segments) {
+                                segments.push(AccessPathSegment::NegativeIndex(- (*n as i64)));
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
                 }
-                ExprKind::Literal(Value::Null) => {
-                    // We've reached the root (short field access starting with `.`)
-                    path.reverse();
-                    return Some(path);
-                }
-                _ => return None, // Not a short field access chain
+            }
+            _ => false,
+        }
+    }
+    
+    let mut segments = Vec::new();
+    if extract_recursive(expr, &mut segments) {
+        Some(segments)
+    } else {
+        None
+    }
+}
+
+/// Extract mutation info from a binary expression on a short path (e.g., .field + 2)
+fn get_pipe_mutation_info(expr: &Expr) -> Option<(Vec<AccessPathSegment>, BinaryOp, Expr)> {
+    if let ExprKind::Binary { left, op, right } = &expr.kind {
+        // Only handle arithmetic operations
+        if matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod) {
+            if let Some(path) = extract_path_segments(left) {
+                return Some((path, op.clone(), *right.clone()));
             }
         }
     }
-    
-    
-    /// Check if the expression is a mutation pattern in pipe context
-    /// Returns Some((path_segments, op, value_expr)) for patterns like `.field + 2`, `.profile.age + 5`, or `.items[0] + 1`
-    /// For assignments (.field = value), returns None but is handled separately
-    fn get_pipe_mutation_info(&self, expr: &Expr) -> Option<(Vec<AccessPathSegment>, BinaryOp, Expr)> {
-        // Check for binary ops like `.field + 2`, `.profile.age * 3`, `.items[0] + 1`, etc.
-        if let ExprKind::Binary { left, op, right } = &expr.kind {
-            // Only treat arithmetic/string ops as mutations, not comparisons
-            if matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod | BinaryOp::Pow) {
-                // Check if left is a short field/index access chain
-                if let Some(path) = self.extract_path_segments(left) {
-                    return Some((path, op.clone(), (**right).clone()));
-                }
-            }
-        }
-        
+    None
+}
+
+/// Extract assignment path from an assignment expression (e.g., .field = value)
+fn get_pipe_assignment_path(expr: &Expr) -> Option<Vec<AccessPathSegment>> {
+    if let ExprKind::Assignment { target, .. } = &expr.kind {
+        extract_path_segments(target)
+    } else {
         None
     }
-    
-    /// Check if the expression is an assignment on a short field access (.field = value, .profile.age = value, or .items[0] = value)
-    /// Returns the path segments if it's a pipe assignment
-    fn get_pipe_assignment_path(&self, expr: &Expr) -> Option<Vec<AccessPathSegment>> {
-        if let ExprKind::Assignment { target, .. } = &expr.kind {
-            return self.extract_path_segments(target);
-        }
-        None
-    }
-    
+}
+
+impl Interpreter {
     /// Get a value at a nested path (fields and/or array indices) from an object
     fn get_nested_path(&self, obj: &Value, path: &[AccessPathSegment]) -> Result<Value, InterpreterError> {
         if path.is_empty() {
@@ -1105,17 +1238,10 @@ impl Interpreter {
                     self.get_field(&current, field)?
                 }
                 AccessPathSegment::Index(idx) => {
-                    match current {
-                        Value::Array(items_rc) => {
-                            let items = items_rc.borrow();
-                            if *idx < items.len() {
-                                items[*idx].clone()
-                            } else {
-                                return Err(InterpreterError::index_out_of_bounds(*idx, items.len()));
-                            }
-                        }
-                        _ => return Err(InterpreterError::type_error("Cannot index non-array")),
-                    }
+                    self.get_index(&current, &Value::Number(*idx as f64, false))?
+                }
+                AccessPathSegment::NegativeIndex(idx) => {
+                    self.get_index(&current, &Value::Number(*idx as f64, false))?
                 }
             };
         }
@@ -1130,35 +1256,31 @@ impl Interpreter {
         
         if path.len() == 1 {
             // Single segment - set directly
-            match &path[0] {
+            return match &path[0] {
                 AccessPathSegment::Field(field) => {
                     if let Value::Object(map_rc) = obj {
                         map_rc.borrow_mut().insert(field.clone(), value);
-                        return Ok(());
+                        Ok(())
+                    } else {
+                        Err(InterpreterError::type_error("Cannot set field on non-object"))
                     }
-                    return Err(InterpreterError::type_error("Cannot set field on non-object"));
                 }
                 AccessPathSegment::Index(idx) => {
-                    if let Value::Array(items_rc) = obj {
-                        let mut items = items_rc.borrow_mut();
-                        if *idx < items.len() {
-                            items[*idx] = value;
-                            return Ok(());
-                        }
-                        return Err(InterpreterError::index_out_of_bounds(*idx, items.len()));
-                    }
-                    return Err(InterpreterError::type_error("Cannot index non-array"));
+                    self.set_index_on_value(obj, *idx as i64, value)
                 }
-            }
+                AccessPathSegment::NegativeIndex(idx) => {
+                    self.set_index_on_value(obj, *idx, value)
+                }
+            };
         }
         
         // Navigate to the parent container, then set the final segment
         let parent_path = &path[..path.len() - 1];
-        let current = self.get_nested_path(obj, parent_path)?;
+        let parent = self.get_nested_path(obj, parent_path)?;
         
         match &path[path.len() - 1] {
             AccessPathSegment::Field(field) => {
-                if let Value::Object(map_rc) = current {
+                if let Value::Object(map_rc) = parent {
                     map_rc.borrow_mut().insert(field.clone(), value);
                     Ok(())
                 } else {
@@ -1166,22 +1288,38 @@ impl Interpreter {
                 }
             }
             AccessPathSegment::Index(idx) => {
-                if let Value::Array(items_rc) = current {
-                    let mut items = items_rc.borrow_mut();
-                    if *idx < items.len() {
-                        items[*idx] = value;
-                        Ok(())
-                    } else {
-                        Err(InterpreterError::index_out_of_bounds(*idx, items.len()))
-                    }
-                } else {
-                    Err(InterpreterError::type_error("Cannot index non-array"))
-                }
+                self.set_index_on_value(&parent, *idx as i64, value)
+            }
+            AccessPathSegment::NegativeIndex(idx) => {
+                self.set_index_on_value(&parent, *idx, value)
             }
         }
     }
-    
 
+    fn set_index_on_value(&self, obj: &Value, idx: i64, value: Value) -> Result<(), InterpreterError> {
+        if let Value::Array(items_rc) = obj {
+            let mut items = items_rc.borrow_mut();
+            let real_idx = if idx < 0 {
+                let r = items.len() as i64 + idx;
+                if r < 0 {
+                    return Err(InterpreterError::index_out_of_bounds(idx as usize, items.len()));
+                }
+                r as usize
+            } else {
+                idx as usize
+            };
+
+            if real_idx < items.len() {
+                items[real_idx] = value;
+                Ok(())
+            } else {
+                Err(InterpreterError::index_out_of_bounds(real_idx, items.len()))
+            }
+        } else {
+            Err(InterpreterError::type_error("Cannot index non-array"))
+        }
+    }
+    
     /// Set a value at a dot-separated path on an object, creating nested objects as needed.
     /// Used for object literal path fields like `{ downlink.subcell_id: value }`.
     fn set_path_on_value(&self, obj: Value, path: &[String], value: Value) -> Result<Value, InterpreterError> {
@@ -1219,6 +1357,34 @@ impl Interpreter {
         Ok(set_recursive(&obj, path, &value))
     }
 
+    fn deep_find_all(&self, obj: &Value, field: &str) -> Vec<Value> {
+        let mut results = Vec::new();
+        self.deep_find_recursive(obj, field, &mut results);
+        results
+    }
+
+    fn deep_find_recursive(&self, obj: &Value, field: &str, results: &mut Vec<Value>) {
+        match obj {
+            Value::Object(map_rc) => {
+                let map = map_rc.borrow();
+                // Check if current object has field
+                if let Some(val) = map.get(field) {
+                    results.push(val.clone());
+                }
+                // Recurse into children values
+                for v in map.values() {
+                    self.deep_find_recursive(v, field, results);
+                }
+            }
+            Value::Array(items_rc) => {
+                for v in items_rc.borrow().iter() {
+                    self.deep_find_recursive(v, field, results);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn call_function_value(&mut self, func_val: &Value, call_args: &[Value]) -> Result<Value, InterpreterError> {
         if let Value::Function(func) = func_val {
             self.call_user_function(func, call_args.to_vec())
@@ -1251,8 +1417,8 @@ impl Interpreter {
             // Note: "take" has been removed - use slice(arr, 0, n) instead
             "push" => builtins::builtin_push(&args),
             "input" => builtins::builtin_input(&args),
-            "print" => builtins::builtin_print(&args, |v| self.value_to_string(v)),
-            "unique" => builtins::builtin_unique(&args, |a, b| self.deep_equals(a, b)),
+            "print" => builtins::builtin_print(&args, |v| value_to_string(v)),
+            "unique" => builtins::builtin_unique(&args, |a, b| deep_equals(a, b)),
             "sort_by" => builtins::builtin_sort_by(&args, |v, f| self.get_field(v, f)),
             "group_by" => builtins::builtin_group_by(&args, |v, f| self.get_field(v, f)),
             "include" => self.builtin_include(&args),
@@ -1274,7 +1440,7 @@ impl Interpreter {
             "first" => builtins::builtin_first(&args),
             "last" => builtins::builtin_last(&args),
             "split" => builtins::builtin_split(&args),
-            "join" => builtins::builtin_join(&args, |v| self.value_to_string(v)),
+            "join" => builtins::builtin_join(&args, |v| value_to_string(v)),
             "trim" => builtins::builtin_trim(&args),
             "upper" => builtins::builtin_upper(&args),
             "lower" => builtins::builtin_lower(&args),
@@ -1295,7 +1461,7 @@ impl Interpreter {
             "is_string" => builtins::builtin_is_string(&args),
             "is_number" => builtins::builtin_is_number(&args),
             "is_bool" => builtins::builtin_is_bool(&args),
-            "to_string" => builtins::builtin_to_string(&args, |v| self.value_to_string(v)),
+            "to_string" => builtins::builtin_to_string(&args, |v| value_to_string(v)),
             "to_number" => builtins::builtin_to_number(&args),
             "to_int" => builtins::builtin_to_int(&args),
             "to_float" => builtins::builtin_to_float(&args),
@@ -1316,9 +1482,10 @@ impl Interpreter {
     }
 
     fn call_user_function(&mut self, func: &Function, args: Vec<Value>) -> Result<Value, InterpreterError> {
-        if func.params.len() != args.len() {
-            return Err(InterpreterError::invalid_operation(format!(
-                "Function expects {} arguments, got {}",
+        // Check if we have too many arguments
+        if args.len() > func.params.len() {
+             return Err(InterpreterError::invalid_operation(format!(
+                "Function expects at most {} arguments, got {}",
                 func.params.len(),
                 args.len()
             )));
@@ -1326,8 +1493,17 @@ impl Interpreter {
 
         self.env.push_scope();
 
-        for (param, arg) in func.params.iter().zip(args.iter()) {
-            self.env.set(param.to_string(), arg.clone());
+        let mut args_iter = args.into_iter();
+
+        for param in &func.params {
+            if let Some(arg) = args_iter.next() {
+                self.env.set(param.name.to_string(), arg.clone());
+            } else if let Some(default_expr) = &param.default {
+                let val = self.evaluate(default_expr)?;
+                self.env.set(param.name.to_string(), val);
+            } else {
+                 return Err(InterpreterError::invalid_operation(format!("Missing argument for parameter '{}'", param.name)));
+            }
         }
 
         let result = if let Some(ref body_expr) = func.body_expr {
@@ -1471,8 +1647,17 @@ impl Interpreter {
     fn get_index(&self, arr: &Value, idx: &Value) -> Result<Value, InterpreterError> {
         match (arr, idx) {
             (Value::Array(items), Value::Number(n, _)) => {
-                let index = *n as usize;
                 let len = items.borrow().len();
+                // Handle negative indices: -1 is last element, -2 is second to last, etc.
+                let index = if *n < 0.0 {
+                    let neg_idx = (-*n) as usize;
+                    if neg_idx > len {
+                        return Err(InterpreterError::type_error(format!("Index -{} out of bounds for array of length {}", neg_idx, len)));
+                    }
+                    len - neg_idx
+                } else {
+                    *n as usize
+                };
                 items
                     .borrow()
                     .get(index)
@@ -1483,8 +1668,16 @@ impl Interpreter {
                 // Try pipe context first (for [n] in pipe operations)
                 if let Some(it) = self.env.get(PIPE_CONTEXT)
                     && let Value::Array(items) = it {
-                        let index = *n as usize;
                         let len = items.borrow().len();
+                        let index = if *n < 0.0 {
+                            let neg_idx = (-*n) as usize;
+                            if neg_idx > len {
+                                return Err(InterpreterError::type_error(format!("Index -{} out of bounds for array of length {}", neg_idx, len)));
+                            }
+                            len - neg_idx
+                        } else {
+                            *n as usize
+                        };
                         return items
                             .borrow()
                             .get(index)
@@ -1494,8 +1687,16 @@ impl Interpreter {
                 // Fall back to root
                 if let Some(root) = self.env.get(ROOT_CONTEXT)
                     && let Value::Array(items) = root {
-                        let index = *n as usize;
                         let len = items.borrow().len();
+                        let index = if *n < 0.0 {
+                            let neg_idx = (-*n) as usize;
+                            if neg_idx > len {
+                                return Err(InterpreterError::type_error(format!("Index -{} out of bounds for array of length {}", neg_idx, len)));
+                            }
+                            len - neg_idx
+                        } else {
+                            *n as usize
+                        };
                         return items
                             .borrow()
                             .get(index)
@@ -1545,8 +1746,8 @@ impl Interpreter {
                 result.push(value.clone());
                 Ok(Value::Array(Rc::new(RefCell::new(result))))
             }
-            (left_val, BinaryOp::Eq, right_val) => Ok(Value::Bool(self.values_equal(left_val, right_val))),
-            (left_val, BinaryOp::NotEq, right_val) => Ok(Value::Bool(!self.values_equal(left_val, right_val))),
+            (left_val, BinaryOp::Eq, right_val) => Ok(Value::Bool(values_equal(left_val, right_val))),
+            (left_val, BinaryOp::NotEq, right_val) => Ok(Value::Bool(!values_equal(left_val, right_val))),
             (Value::Number(left_num, _), BinaryOp::Greater, Value::Number(right_num, _)) => Ok(Value::Bool(left_num > right_num)),
             (Value::Number(left_num, _), BinaryOp::Less, Value::Number(right_num, _)) => Ok(Value::Bool(left_num < right_num)),
             (Value::Number(left_num, _), BinaryOp::GreaterEq, Value::Number(right_num, _)) => Ok(Value::Bool(left_num >= right_num)),
@@ -1613,74 +1814,6 @@ impl Interpreter {
         }
     }
     
-    pub fn deep_equals(&self, a: &Value, b: &Value) -> bool {
-        match (a, b) {
-            (Value::Null, Value::Null) => true,
-            (Value::Bool(a), Value::Bool(b)) => a == b,
-            (Value::Number(a, _), Value::Number(b, _)) => a.to_bits() == b.to_bits(),
-            (Value::String(a), Value::String(b)) => a == b,
-            (Value::Array(arr_a), Value::Array(arr_b)) => {
-                let arr_a_ref = arr_a.borrow();
-                let arr_b_ref = arr_b.borrow();
-                if arr_a_ref.len() != arr_b_ref.len() {
-                    return false;
-                }
-                arr_a_ref
-                    .iter()
-                    .zip(arr_b_ref.iter())
-                    .all(|(va, vb)| self.deep_equals(va, vb))
-            }
-            (Value::Object(obj_a), Value::Object(obj_b)) => {
-                let obj_a_ref = obj_a.borrow();
-                let obj_b_ref = obj_b.borrow();
-                if obj_a_ref.len() != obj_b_ref.len() {
-                    return false;
-                }
-                obj_a_ref.iter().all(|(k, va)| {
-                    if let Some(vb) = obj_b_ref.get(k) {
-                        self.deep_equals(va, vb)
-                    } else {
-                        false
-                    }
-                })
-            }
-            _ => false,
-        }
-    }
-
-    pub fn value_to_string(&self, val: &Value) -> String {
-        match val {
-            Value::Null => "null".to_string(),
-            Value::Bool(b) => b.to_string(),
-            Value::Number(n, is_float) => {
-                if *is_float || n.fract() != 0.0 {
-                    n.to_string()
-                } else {
-                    format!("{:.0}", n)
-                }
-            }
-            Value::String(s) => s.to_string(),
-            Value::Array(arr) => {
-                let items: Vec<String> = arr.borrow().iter().map(|v| self.value_to_display(v)).collect();
-                format!("[{}]", items.join(", "))
-            }
-            Value::Object(obj) => {
-                let fields: Vec<String> = obj.borrow().iter()
-                    .map(|(k, v)| format!("\"{}\": {}", k, self.value_to_display(v)))
-                    .collect();
-                format!("{{{}}}", fields.join(", "))
-            }
-            Value::Function(_) => "<function>".to_string(),
-            Value::Module(m) => format!("<module:{}>", m.name),
-        }
-    }
-
-    fn value_to_display(&self, val: &Value) -> String {
-        match val {
-            Value::String(s) => format!("\"{}\"", s),
-            _ => self.value_to_string(val),
-        }
-    }
 }
 
 pub fn parse_and_run(source: &str, root: Value) -> Result<Option<Value>, String> {

@@ -1,4 +1,43 @@
 use crate::Value;
+use serde_json::Value as JsonValue;
+use std::cell::RefCell;
+use std::rc::Rc;
+
+pub fn parse_json(json_str: &str) -> Result<JsonValue, String> {
+    serde_json::from_str(json_str).map_err(|e| e.to_string())
+}
+
+pub fn parse_json_file(file_path: &str) -> Result<JsonValue, String> {
+    let json_str = std::fs::read_to_string(file_path).map_err(|e| e.to_string())?;
+    parse_json(&json_str)
+}
+
+pub fn json_to_value(json_val: JsonValue) -> Value {
+    match json_val {
+        JsonValue::Null => Value::Null,
+        JsonValue::Bool(b) => Value::Bool(b),
+        JsonValue::Number(json_number) => {
+            let numeric_value = json_number.as_f64().unwrap_or(0.0);
+            let number_string = json_number.to_string();
+            let is_float = number_string.contains('.')
+                || number_string.contains('e')
+                || number_string.contains('E');
+            Value::Number(numeric_value, is_float)
+        }
+        JsonValue::String(s) => Value::String(Rc::from(s.as_str())),
+        JsonValue::Array(array) => {
+            let items: Vec<Value> = array.into_iter().map(json_to_value).collect();
+            Value::Array(Rc::new(RefCell::new(items)))
+        }
+        JsonValue::Object(object) => {
+            let mut map = indexmap::IndexMap::new();
+            for (k, v) in object {
+                map.insert(k, json_to_value(v));
+            }
+            Value::Object(Rc::new(RefCell::new(map)))
+        }
+    }
+}
 
 pub fn value_to_json_string(value: &Value, compact: bool) -> String {
     format_json(value, if compact { None } else { Some(0) })

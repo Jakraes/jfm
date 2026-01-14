@@ -1,10 +1,89 @@
-//! Type checking and conversion built-in functions.
+//! Miscellaneous built-in functions (IO, Math, Types).
 
 use crate::value::Value;
 use super::super::error::InterpreterError;
-use super::{require_args, with_string};
+use super::{require_args, with_number, with_string};
 use std::cell::RefCell;
 use std::rc::Rc;
+
+// IO functions
+
+pub fn builtin_print(
+    args: &[Value],
+    value_to_string: impl Fn(&Value) -> String,
+) -> Result<Value, InterpreterError> {
+    use std::io::Write;
+    if args.is_empty() {
+        println!();
+    } else {
+        let output: Vec<String> = args.iter().map(&value_to_string).collect();
+        println!("{}", output.join(" "));
+    }
+    std::io::stdout().flush().ok();
+    Ok(Value::Null)
+}
+
+pub fn builtin_input(args: &[Value]) -> Result<Value, InterpreterError> {
+    use std::io::{self, Write};
+    if let Some(Value::String(prompt)) = args.first() {
+        print!("{}", prompt);
+        io::stdout().flush().ok();
+    }
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| InterpreterError::invalid_operation(format!("Failed to read input: {}", e)))?;
+    Ok(Value::String(Rc::from(input.trim_end_matches(['\n', '\r']))))
+}
+
+// Math functions
+
+macro_rules! unary_math {
+    ($name:ident, $op:ident) => {
+        pub fn $name(args: &[Value]) -> Result<Value, InterpreterError> {
+            require_args!(args, 1, stringify!($op));
+            with_number!(args, stringify!($op), |n: f64| Ok(Value::Number(
+                n.$op(),
+                true
+            )))
+        }
+    };
+}
+
+unary_math!(builtin_floor, floor);
+unary_math!(builtin_ceil, ceil);
+unary_math!(builtin_round, round);
+unary_math!(builtin_abs, abs);
+unary_math!(builtin_sin, sin);
+unary_math!(builtin_cos, cos);
+unary_math!(builtin_tan, tan);
+
+pub fn builtin_sqrt(args: &[Value]) -> Result<Value, InterpreterError> {
+    require_args!(args, 1, "sqrt");
+    with_number!(args, "sqrt", |n: f64| {
+        if n < 0.0 {
+            Err(InterpreterError::invalid_operation("sqrt: negative number"))
+        } else {
+            Ok(Value::Number(n.sqrt(), true))
+        }
+    })
+}
+
+pub fn builtin_pow(args: &[Value]) -> Result<Value, InterpreterError> {
+    require_args!(args, 2, "pow");
+    if let (Value::Number(base, _), Value::Number(exp, _)) = (&args[0], &args[1]) {
+        Ok(Value::Number(base.powf(*exp), true))
+    } else {
+        Err(InterpreterError::type_error("pow requires two numbers"))
+    }
+}
+
+pub fn builtin_random(_args: &[Value]) -> Result<Value, InterpreterError> {
+    use rand::Rng;
+    Ok(Value::Number(rand::thread_rng().r#gen::<f64>(), true))
+}
+
+// Type functions
 
 macro_rules! type_check {
     ($name:ident, $pattern:pat) => {
@@ -105,7 +184,7 @@ pub fn builtin_to_bool(args: &[Value]) -> Result<Value, InterpreterError> {
 pub fn builtin_parse_json(args: &[Value]) -> Result<Value, InterpreterError> {
     require_args!(args, 1, "parse_json");
     with_string!(args, "parse_json", |s: &Rc<str>| {
-        use crate::json;
+        use crate::format;
         fn convert(v: &serde_json::Value) -> Value {
             match v {
                 serde_json::Value::Null => Value::Null,
@@ -120,7 +199,7 @@ pub fn builtin_parse_json(args: &[Value]) -> Result<Value, InterpreterError> {
                 ))),
             }
         }
-        json::parse_json(s.as_ref())
+        format::parse_json(s.as_ref())
             .map(|v| convert(&v))
             .map_err(|e| InterpreterError::invalid_operation(format!("parse_json: {}", e)))
     })
