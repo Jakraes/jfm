@@ -136,26 +136,26 @@ pub fn builtin_set_path(args: &[Value]) -> Result<Value, InterpreterError> {
     Ok(set_recursive(&args[0], &parts, &args[2]))
 }
 
+/// Deep clone a Value, recursively cloning nested arrays and objects
+pub fn deep_clone(value: &Value) -> Value {
+    match value {
+        Value::Array(arr) => {
+            let cloned: Vec<Value> = arr.borrow().iter().map(deep_clone).collect();
+            Value::Array(Rc::new(RefCell::new(cloned)))
+        }
+        Value::Object(obj) => {
+            let cloned: IndexMap<String, Value> = obj
+                .borrow()
+                .iter()
+                .map(|(k, v)| (k.clone(), deep_clone(v)))
+                .collect();
+            Value::Object(Rc::new(RefCell::new(cloned)))
+        }
+        other => other.clone(),
+    }
+}
+
 pub fn builtin_clone(args: &[Value]) -> Result<Value, InterpreterError> {
     require_args!(args, 1, "clone");
-
-    fn deep_clone(value: &Value) -> Value {
-        match value {
-            Value::Array(arr) => {
-                let cloned: Vec<Value> = arr.borrow().iter().map(deep_clone).collect();
-                Value::Array(Rc::new(RefCell::new(cloned)))
-            }
-            Value::Object(obj) => {
-                let cloned: IndexMap<String, Value> = obj
-                    .borrow()
-                    .iter()
-                    .map(|(k, v)| (k.clone(), deep_clone(v)))
-                    .collect();
-                Value::Object(Rc::new(RefCell::new(cloned)))
-            }
-            other => other.clone(),
-        }
-    }
-
     Ok(deep_clone(&args[0]))
 }

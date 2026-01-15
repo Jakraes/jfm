@@ -650,7 +650,14 @@ impl TokenParser {
                     } else {
                         self.parse_ternary()?
                     };
-                    self.expect(Token::Arrow)?;
+                    // Accept either Arrow (->) or Assign (=) for pipe update syntax
+                    if !matches!(self.current_token(), Some(Token::Arrow) | Some(Token::Assign)) {
+                        let err = ParseError::new("unexpected token", self.current_span())
+                            .with_expected(vec!["Arrow".to_string(), "Assign".to_string()])
+                            .with_found(format!("{:?}", self.current_token()));
+                        return Err(err);
+                    }
+                    self.advance();
                     let value = self.parse_pipe_right()?;
                     let span = left.span.merge(value.span);
                     left = Expr {

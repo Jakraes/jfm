@@ -276,7 +276,8 @@ impl Interpreter {
                                 self.env.set(PIPE_CONTEXT.to_string(), Value::Number(i as f64, false));
                                 let val = self.evaluate(right)?;
                                 self.env.pop_scope();
-                                results.push(val);
+                                // Deep clone to ensure each replicated item is independent
+                                results.push(builtins::deep_clone(&val));
                             }
                             return Ok(Value::Array(Rc::new(RefCell::new(results))));
                         }
@@ -341,6 +342,14 @@ impl Interpreter {
             }
 
             ExprKind::PipeUpdate { left, path, value } => {
+                // Check if the left expression contains @ as name bindings that need to be preserved
+                if let Some((source_expr, binding_name, downstream_expr)) = self.extract_pipe_binding_chain(left) {
+                    // Process with preserved binding context
+                    return self.eval_pipe_update_with_binding(
+                        source_expr, &binding_name, downstream_expr, path, value, expr.span
+                    );
+                }
+                
                 let left_val = self.evaluate(left)?;
                 
                 let path_segments = extract_path_segments(path)
@@ -655,14 +664,15 @@ impl Interpreter {
                         count.span
                     )),
                 };
-                
+
                 let mut results = Vec::with_capacity(n);
                 for i in 0..n {
                     self.env.push_scope();
                     self.env.set(PIPE_CONTEXT.to_string(), Value::Number(i as f64, false));
                     let val = self.evaluate(template)?;
                     self.env.pop_scope();
-                    results.push(val);
+                    // Deep clone to ensure each replicated item is independent
+                    results.push(builtins::deep_clone(&val));
                 }
                 Ok(Value::Array(Rc::new(RefCell::new(results))))
             }
@@ -751,10 +761,37 @@ impl Interpreter {
         if let ExprKind::ArrayIndex { array, index } = &right.kind
             && matches!(array.kind, ExprKind::Literal(Value::Null)) {
                 let idx = self.evaluate(index)?;
-                let val = self.get_index(&left, &idx, right.span)?;
-                if matches!(left, Value::Array(_)) {
-                    return Ok(Value::Array(Rc::new(RefCell::new(vec![val]))));
+                
+                // Handle range indices (e.g., [0..2]) - returns a slice (array)
+                if let Value::Array(range_indices) = &idx {
+                    if let Value::Array(items_rc) = &left {
+                        let items = items_rc.borrow();
+                        let len = items.len();
+                        let mut result = Vec::new();
+                        for range_idx in range_indices.borrow().iter() {
+                            if let Value::Number(n, _) = range_idx {
+                                let index = if *n < 0.0 {
+                                    let neg_idx = (-*n) as usize;
+                                    if neg_idx > len { continue; }
+                                    len - neg_idx
+                                } else {
+                                    *n as usize
+                                };
+                                if index < len {
+                                    result.push(items[index].clone());
+                                }
+                            }
+                        }
+                        return Ok(Value::Array(Rc::new(RefCell::new(result))));
+                    }
+                    return Err(InterpreterError::type_error_at(
+                        format!("cannot slice value of type `{}`", self.value_type_name(&left)),
+                        right.span
+                    ));
                 }
+                
+                // Handle single index (e.g., [0]) - returns a single element
+                let val = self.get_index(&left, &idx, right.span)?;
                 return Ok(val);
             }
         
@@ -967,6 +1004,157 @@ impl Interpreter {
                 let res = self.evaluate(body)?;
                 self.env.pop_scope();
                 Ok(res)
+            }
+        }
+    }
+    
+    /// Extract @ as name binding chain from a pipe expression for PipeUpdate handling.
+    /// Returns (source_expr, binding_name, downstream_expr) if found.
+    fn extract_pipe_binding_chain<'a>(&self, expr: &'a Expr) -> Option<(&'a Expr, Rc<str>, &'a Expr)> {
+        // Look for pattern: (source | @ as name | downstream)
+        // Which in AST is: Pipe { left: Pipe { left: source, right: AsBinding }, right: downstream }
+        if let ExprKind::Pipe { left: inner_pipe, right: downstream } = &expr.kind {
+            if let ExprKind::Pipe { left: source, right: binding } = &inner_pipe.kind {
+                if let ExprKind::AsBinding { name, .. } = &binding.kind {
+                    return Some((source, name.clone(), downstream));
+                }
+            }
+            // Also check if inner_pipe itself is an AsBinding (single pipe with binding)
+            if let ExprKind::AsBinding { name: _, .. } = &inner_pipe.kind {
+                // This case is: @ as name | downstream, but we need a source
+                // This shouldn't happen in practice since @ as name needs something before it
+                return None;
+            }
+            // Recursively check if inner_pipe contains a binding chain
+            if let Some((source, name, _inner_downstream)) = self.extract_pipe_binding_chain(inner_pipe) {
+                // We have a binding deeper in the chain
+                // Return the outermost structure so we can process it correctly
+                return Some((source, name, downstream));
+            }
+        }
+        None
+    }
+    
+    /// Evaluate PipeUpdate while preserving @ as name binding context
+    fn eval_pipe_update_with_binding(
+        &mut self,
+        source_expr: &Expr,
+        binding_name: &Rc<str>,
+        downstream_expr: &Expr,
+        path: &Expr,
+        value: &Expr,
+        span: Span,
+    ) -> Result<Value, InterpreterError> {
+        let path_segments = extract_path_segments(path)
+            .ok_or_else(|| InterpreterError::type_error_at("PipeUpdate path must be a field access or array index", span))?;
+        
+        // Extract the path from downstream_expr (e.g., .downlink.pdcch.coresets)
+        let downstream_path_segments = extract_path_segments(downstream_expr);
+        
+        // Evaluate the source expression
+        let source_val = self.evaluate(source_expr)?;
+        
+        match source_val {
+            Value::Array(items_rc) => {
+                let items = items_rc.borrow();
+                let mut results = Vec::with_capacity(items.len());
+                
+                for item in items.iter() {
+                    // Deep clone the item to avoid shared reference issues
+                    let cloned_item = builtins::deep_clone(item);
+                    
+                    self.env.push_scope();
+                    // Set the binding (e.g., "cell" = current item)
+                    self.env.set(binding_name.to_string(), cloned_item.clone());
+                    self.env.set(PIPE_CONTEXT.to_string(), cloned_item.clone());
+                    
+                    // Evaluate downstream to get the target for update (e.g., .downlink.pdcch.coresets)
+                    let downstream_val = self.evaluate(downstream_expr)?;
+                    
+                    // Apply the pipe update to the downstream value
+                    let updated_downstream = match downstream_val {
+                        Value::Array(downstream_items_rc) => {
+                            let downstream_items = downstream_items_rc.borrow();
+                            let mut updated_items = Vec::with_capacity(downstream_items.len());
+                            
+                            for downstream_item in downstream_items.iter() {
+                                // Get current path value
+                                let current_path_val = self.get_nested_path(downstream_item, &path_segments, path.span)?;
+                                
+                                // Push scope for @ context in value evaluation
+                                self.env.push_scope();
+                                self.env.set(PIPE_CONTEXT.to_string(), current_path_val.clone());
+                                
+                                // Evaluate the new value (binding is still available here!)
+                                let new_val = self.evaluate(value)?;
+                                
+                                self.env.pop_scope();
+                                
+                                // Update the item
+                                let updated_item = downstream_item.clone();
+                                self.set_nested_path(&updated_item, &path_segments, new_val)?;
+                                updated_items.push(updated_item);
+                            }
+                            
+                            Value::Array(Rc::new(RefCell::new(updated_items)))
+                        }
+                        other => {
+                            // Single value, not array
+                            let current_path_val = self.get_nested_path(&other, &path_segments, path.span)?;
+                            
+                            self.env.push_scope();
+                            self.env.set(PIPE_CONTEXT.to_string(), current_path_val.clone());
+                            let new_val = self.evaluate(value)?;
+                            self.env.pop_scope();
+                            
+                            let updated = other.clone();
+                            self.set_nested_path(&updated, &path_segments, new_val)?;
+                            updated
+                        }
+                    };
+                    
+                    // Put the updated downstream value back into the source item
+                    let updated_item = if let Some(ref downstream_segments) = downstream_path_segments {
+                        self.set_nested_path(&cloned_item, downstream_segments, updated_downstream)?;
+                        cloned_item
+                    } else {
+                        // If we can't extract path segments, just return the updated downstream
+                        updated_downstream
+                    };
+                    
+                    results.push(updated_item);
+                    self.env.pop_scope();
+                }
+                
+                // Update the source in root if it's a root field access
+                let updated_array = Value::Array(Rc::new(RefCell::new(results)));
+                if let Some(source_segments) = extract_path_segments(source_expr) {
+                    if let Some(root_val) = self.env.get(ROOT_CONTEXT) {
+                        self.set_nested_path(&root_val, &source_segments, updated_array.clone())?;
+                    }
+                }
+                
+                Ok(updated_array)
+            }
+            other => {
+                // Single item source
+                self.env.push_scope();
+                self.env.set(binding_name.to_string(), other.clone());
+                self.env.set(PIPE_CONTEXT.to_string(), other.clone());
+                
+                let downstream_val = self.evaluate(downstream_expr)?;
+                let current_path_val = self.get_nested_path(&downstream_val, &path_segments, path.span)?;
+                
+                self.env.push_scope();
+                self.env.set(PIPE_CONTEXT.to_string(), current_path_val.clone());
+                let new_val = self.evaluate(value)?;
+                self.env.pop_scope();
+                
+                let updated = downstream_val.clone();
+                self.set_nested_path(&updated, &path_segments, new_val)?;
+                
+                self.env.pop_scope();
+                Ok(updated)
             }
         }
     }
@@ -1697,9 +1885,10 @@ impl Interpreter {
 
     fn is_replication_template(&self, expr: &Expr) -> bool {
         match &expr.kind {
-            ExprKind::Object { .. } | ExprKind::ObjectWithSpread { .. } 
+            ExprKind::Object { .. } | ExprKind::ObjectWithSpread { .. }
             | ExprKind::Array { .. } | ExprKind::ArrayWithSpread { .. } => true,
-            ExprKind::Identifier(name) if name.as_ref() == "@" => true,
+            // Note: bare @ is NOT a replication template - only objects/arrays containing @ are
+            // This allows expressions like `5 * @` to work as multiplication inside a replication context
             ExprKind::FieldAccess { object, .. } => self.is_replication_template(object),
             ExprKind::Binary { left, right, .. } => {
                 self.is_replication_template(left) || self.is_replication_template(right)
