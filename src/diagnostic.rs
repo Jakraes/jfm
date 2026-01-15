@@ -368,7 +368,6 @@ impl<'a> DiagnosticRenderer<'a> {
     }
 }
 
-/// Render multiple diagnostics
 pub fn render_diagnostics(source: &str, file_name: &str, diagnostics: &[Diagnostic], use_color: bool) -> String {
     let renderer = DiagnosticRenderer::new(source, file_name, use_color);
     let mut output = String::new();

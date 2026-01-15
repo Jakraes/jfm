@@ -1,5 +1,3 @@
-//! String manipulation built-in functions.
-
 use crate::value::Value;
 use super::super::error::InterpreterError;
 use super::{require_args, with_string};

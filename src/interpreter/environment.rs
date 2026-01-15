@@ -3,13 +3,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-/// Represents a single scope level in the environment.
 type Scope = HashMap<String, Value>;
 
-/// Environment manages variable scopes with efficient push/pop semantics.
-/// 
-/// Uses a stack of scopes rather than creating new Environment objects,
-/// reducing allocations during loop iterations and function calls.
 #[derive(Debug, Clone)]
 pub struct Environment {
     scopes: Rc<RefCell<Vec<Scope>>>,
@@ -26,14 +21,10 @@ impl Environment {
         }
     }
 
-    /// Push a new scope onto the stack. Use this at the start of a loop iteration
-    /// or block scope instead of creating a new Environment.
     pub fn push_scope(&self) {
         self.scopes.borrow_mut().push(HashMap::new());
     }
 
-    /// Pop the current scope from the stack. Use this at the end of a loop iteration
-    /// or block scope.
     pub fn pop_scope(&self) {
         let mut scopes = self.scopes.borrow_mut();
         if scopes.len() > 1 {
@@ -41,7 +32,6 @@ impl Environment {
         }
     }
 
-    /// Set a variable in the current (topmost) scope.
     pub fn set(&self, name: String, value: Value) {
         let mut scopes = self.scopes.borrow_mut();
         if let Some(current_scope) = scopes.last_mut() {
@@ -49,18 +39,15 @@ impl Environment {
         }
     }
 
-    /// Get a variable, searching from innermost to outermost scope.
     pub fn get(&self, name: &str) -> Option<Value> {
         let scopes = self.scopes.borrow();
         
-        // Search from innermost to outermost scope
         for scope in scopes.iter().rev() {
             if let Some(value) = scope.get(name) {
                 return Some(value.clone());
             }
         }
         
-        // Check parent environment if not found
         if let Some(parent) = &self.parent {
             parent.get(name)
         } else {
@@ -68,12 +55,9 @@ impl Environment {
         }
     }
 
-    /// Update an existing variable in any scope.
-    /// Returns true if the variable was found and updated.
     pub fn update(&self, name: &str, value: Value) -> bool {
         let mut scopes = self.scopes.borrow_mut();
         
-        // Search from innermost to outermost scope
         for scope in scopes.iter_mut().rev() {
             if scope.contains_key(name) {
                 scope.insert(name.to_string(), value);
@@ -81,7 +65,6 @@ impl Environment {
             }
         }
         
-        // Try parent environment
         if let Some(parent) = &self.parent {
             parent.update(name, value)
         } else {
@@ -89,13 +72,10 @@ impl Environment {
         }
     }
 
-    /// Get all bindings from all scopes (for module exports).
-    /// Returns bindings with inner scopes taking precedence over outer ones.
     pub fn get_all_bindings(&self) -> Vec<(String, Value)> {
         let scopes = self.scopes.borrow();
         let mut result = HashMap::new();
         
-        // Iterate from outermost to innermost so inner scopes override
         for scope in scopes.iter() {
             for (name, value) in scope.iter() {
                 result.insert(name.clone(), value.clone());

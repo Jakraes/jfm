@@ -4,8 +4,6 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use indexmap::IndexMap;
 
-// --- Helpers ---
-
 fn make_simple_data() -> Value {
     let mut obj = IndexMap::new();
     obj.insert("x".to_string(), Value::Number(10.0, false));
@@ -141,13 +139,10 @@ fn test_literals() {
     assert_eq!(parse_and_run("-5 + 0;", Value::Null).unwrap().unwrap(), Value::Number(-5.0, false));
 }
 
-// --- INTERMEDIATE TESTS (from medium.rs) ---
-
 #[test]
 fn test_control_flow_basic() {
     let root = make_user_root();
     
-    // For loop
     let source = r#"let names = []; for u in root.users { names = push(names, u.name); } names;"#;
     let result = parse_and_run(source, root.clone()).unwrap().unwrap();
     let items = result.as_array().unwrap();
@@ -166,7 +161,6 @@ fn test_control_flow_basic() {
 fn test_literals_extended() {
     let root = make_user_root();
     
-    // Object literal
     let source = r#"let first = root.users[0]; { "user": first.name, "adult": first.age >= 18 };"#;
     let result = parse_and_run(source, root.clone()).unwrap().unwrap();
     let obj = result.as_object().unwrap();
@@ -180,7 +174,6 @@ fn test_literals_extended() {
 
 #[test]
 fn test_operators_advanced() {
-    // Range
     let result = parse_and_run("1..5;", Value::Null).unwrap().unwrap();
     assert_eq!(result.as_array().unwrap().len(), 5);
 
@@ -189,8 +182,6 @@ fn test_operators_advanced() {
     let result = parse_and_run("root.missing?.name;", root).unwrap().unwrap();
     assert_eq!(result, Value::Null);
 }
-
-// --- OPERATOR TESTS (from operators.rs) ---
 
 #[test]
 fn test_ternary_operator() {
@@ -217,7 +208,6 @@ fn test_complex_filtering_and_mapping() {
     let result = parse_and_run(source, root.clone()).unwrap().unwrap();
     assert_eq!(result.as_array().unwrap().len(), 3);
 
-    // Salary update
     let source = r#"for e in root.employees { e.salary = e.salary * 1.1; } root.employees;"#;
     let result = parse_and_run(source, root).unwrap().unwrap();
     let salary = result.as_array().unwrap()[0].as_object().unwrap().get("salary").unwrap().as_number().unwrap();

@@ -1,11 +1,5 @@
-//! Error handling and edge case tests
-
 use jfm::interpreter::parse_and_run;
 use jfm::Value;
-
-// =============================================================================
-// TYPE ERROR TESTS
-// =============================================================================
 
 #[test]
 fn test_error_add_string_and_number() {
@@ -77,10 +71,6 @@ fn test_error_index_with_string() {
     assert!(result.is_err());
 }
 
-// =============================================================================
-// UNDEFINED VARIABLE TESTS
-// =============================================================================
-
 #[test]
 fn test_error_undefined_variable() {
     let source = "let x = undefined_var;";
@@ -110,10 +100,6 @@ fn test_error_undefined_in_loop() {
     assert!(result.is_err());
 }
 
-// =============================================================================
-// INDEX OUT OF BOUNDS TESTS
-// =============================================================================
-
 #[test]
 fn test_error_index_out_of_bounds() {
     let source = "let arr = [1, 2, 3]; arr[10];";
@@ -126,8 +112,6 @@ fn test_error_index_out_of_bounds() {
 fn test_error_negative_index() {
     let source = "let arr = [1, 2, 3]; arr[-1];";
     let result = parse_and_run(source, Value::Null);
-    // Negative indices convert to unsigned, becoming very large - may or may not error
-    // depending on implementation. Just verify execution completes.
     let _ = result;
 }
 
@@ -137,10 +121,6 @@ fn test_error_empty_array_index() {
     let result = parse_and_run(source, Value::Null);
     assert!(result.is_err());
 }
-
-// =============================================================================
-// DIVISION BY ZERO TESTS
-// =============================================================================
 
 #[test]
 fn test_error_division_by_zero() {
@@ -161,13 +141,8 @@ fn test_error_division_by_zero_variable() {
 fn test_modulo_by_zero() {
     let source = "let x = 10 % 0;";
     let result = parse_and_run(source, Value::Null);
-    // Modulo by zero in Rust returns NaN, not an error
     assert!(result.is_ok());
 }
-
-// =============================================================================
-// FUNCTION ARGUMENT ERRORS
-// =============================================================================
 
 #[test]
 fn test_error_sum_non_array() {
@@ -175,10 +150,6 @@ fn test_error_sum_non_array() {
     let result = parse_and_run(source, Value::Null);
     assert!(result.is_err());
 }
-
-// Note: count and take functions have been removed
-// count() - use .length property instead
-// take(arr, n) - use slice(arr, 0, n) instead
 
 #[test]
 fn test_error_slice_non_array() {
@@ -230,10 +201,6 @@ fn test_error_unknown_function() {
     assert!(result.unwrap_err().contains("Unknown function"));
 }
 
-// =============================================================================
-// PARSE ERROR TESTS
-// =============================================================================
-
 #[test]
 fn test_error_missing_semicolon() {
     let source = "let x = 5";
@@ -269,10 +236,6 @@ fn test_error_invalid_operator() {
     assert!(result.is_err());
 }
 
-// =============================================================================
-// LOOP ERROR TESTS
-// =============================================================================
-
 #[test]
 fn test_error_for_over_non_array() {
     let source = "for x in 42 { x; }";
@@ -294,10 +257,6 @@ fn test_error_for_over_object() {
     let result = parse_and_run(source, Value::Null);
     assert!(result.is_err());
 }
-
-// =============================================================================
-// EDGE CASE VALUE TESTS
-// =============================================================================
 
 #[test]
 fn test_null_equality() {
@@ -331,7 +290,6 @@ fn test_null_inequality_with_false() {
 fn test_empty_array_equality() {
     let source = "[] == [];";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    // Empty arrays are different instances
     assert_eq!(result, Value::Bool(false));
 }
 
@@ -339,7 +297,6 @@ fn test_empty_array_equality() {
 fn test_empty_object_equality() {
     let source = "let a = {}; let b = {}; a == b;";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    // Empty objects are different instances  
     assert_eq!(result, Value::Bool(false));
 }
 
@@ -362,7 +319,6 @@ fn test_float_precision() {
     let source = "0.1 + 0.2;";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     let n = result.as_number().unwrap();
-    // Allow for floating point imprecision
     assert!((n - 0.3).abs() < 0.0001);
 }
 
@@ -388,14 +344,9 @@ fn test_very_small_number() {
 fn test_power_overflow() {
     let source = "2 ^ 1024;";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    // Very large exponent results in infinity
     let n = result.as_number().unwrap();
     assert!(n.is_infinite() || n > 1e300);
 }
-
-// =============================================================================
-// STRING EDGE CASES
-// =============================================================================
 
 #[test]
 fn test_empty_string() {
@@ -439,10 +390,6 @@ fn test_unicode_emoji() {
     assert!(result.as_string().unwrap().contains("👋"));
 }
 
-// =============================================================================
-// ARRAY EDGE CASES
-// =============================================================================
-
 #[test]
 fn test_deeply_nested_array() {
     let source = "let arr = [[[[[1]]]]]; arr[0][0][0][0][0];";
@@ -463,10 +410,6 @@ fn test_mixed_type_array() {
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     assert_eq!(result.as_number().unwrap(), 6.0);
 }
-
-// =============================================================================
-// OBJECT EDGE CASES
-// =============================================================================
 
 #[test]
 fn test_object_with_numeric_string_key() {
@@ -489,10 +432,6 @@ fn test_object_field_not_found() {
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
     assert!(matches!(result, Value::Null));
 }
-
-// =============================================================================
-// SCOPE EDGE CASES
-// =============================================================================
 
 #[test]
 fn test_variable_shadowing_in_loop() {
@@ -533,10 +472,6 @@ fn test_nested_scope_access() {
     assert_eq!(result.as_number().unwrap(), 3.0);
 }
 
-// =============================================================================
-// PIPE CHAIN ERROR TESTS
-// =============================================================================
-
 #[test]
 fn test_pipe_chain_error_step_1() {
     // Error in first step of pipe chain
@@ -547,7 +482,6 @@ fn test_pipe_chain_error_step_1() {
     let result = parse_and_run(source, Value::Null);
     assert!(result.is_err());
     let error_msg = result.unwrap_err();
-    // Should mention pipe chain and step
     assert!(error_msg.contains("pipe chain") || error_msg.contains("step") || error_msg.contains("Pipe chain"));
 }
 
@@ -562,13 +496,11 @@ fn test_pipe_chain_error_step_2() {
     let result = parse_and_run(source, Value::Null);
     assert!(result.is_err());
     let error_msg = result.unwrap_err();
-    // Should mention pipe chain and step
     assert!(error_msg.contains("pipe chain") || error_msg.contains("step") || error_msg.contains("Pipe chain"));
 }
 
 #[test]
 fn test_pipe_chain_error_step_3() {
-    // Error in third step of pipe chain
     let source = r#"
         let users = [{ name: "Bob", age: 30 }];
         users | .name | len | .nonexistent;
@@ -576,7 +508,6 @@ fn test_pipe_chain_error_step_3() {
     let result = parse_and_run(source, Value::Null);
     assert!(result.is_err());
     let error_msg = result.unwrap_err();
-    // Should mention pipe chain and step
     assert!(error_msg.contains("pipe chain") || error_msg.contains("step") || error_msg.contains("Pipe chain"));
 }
 
@@ -590,7 +521,6 @@ fn test_pipe_chain_error_with_field_not_found() {
     let result = parse_and_run(source, Value::Null);
     assert!(result.is_err());
     let error_msg = result.unwrap_err();
-    // Should contain information about the error
     assert!(error_msg.contains("field") || error_msg.contains("missing") || error_msg.contains("pipe chain"));
 }
 
@@ -604,7 +534,6 @@ fn test_pipe_chain_error_with_type_error() {
     let result = parse_and_run(source, Value::Null);
     assert!(result.is_err());
     let error_msg = result.unwrap_err();
-    // Should contain information about the error (division by zero or pipe chain)
     assert!(error_msg.len() > 0);
 }
 
@@ -618,6 +547,5 @@ fn test_pipe_chain_error_index_out_of_bounds() {
     let result = parse_and_run(source, Value::Null);
     assert!(result.is_err());
     let error_msg = result.unwrap_err();
-    // Should contain information about the error
     assert!(error_msg.len() > 0);
 }

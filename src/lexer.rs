@@ -2,7 +2,6 @@ use chumsky::{prelude::*, text};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    // Keywords
     Let,
     Const,
     For,
@@ -27,7 +26,6 @@ pub enum Token {
     Null,
     At,
 
-    // Arithmetic Operators
     Plus,
     Minus,
     Star,
@@ -35,7 +33,6 @@ pub enum Token {
     Percent,
     Caret,
 
-    // Comparison Operators
     Eq,
     NotEq,
     Greater,
@@ -43,20 +40,18 @@ pub enum Token {
     GreaterEq,
     LessEq,
 
-    // Logical Operators
     And,
     Or,
     Bang,
 
-    // Special Operators
     Pipe,
     PipeUpdate,  // |~
     Assign,
-    PlusAssign,   // +=
-    MinusAssign,  // -=
-    MulAssign,    // *=
-    DivAssign,    // /=
-    ModAssign,    // %=
+    PlusAssign,
+    MinusAssign,
+    MulAssign,
+    DivAssign,
+    ModAssign,
     DotDot,
     Arrow,
     Comma,
@@ -66,7 +61,6 @@ pub enum Token {
     Question,
     NullCoalesce,
 
-    // Delimiters
     Dot,
     Semicolon,
     LParen,
@@ -253,7 +247,6 @@ pub fn lexer<'a>()
 
     let operators = multi_char_operators.or(single_char_operators);
 
-    // Single-line comments: # or // until end of line
     let line_comment = choice((
         just('#').ignored(),
         just('/').then(just('/')).ignored(),
@@ -262,7 +255,6 @@ pub fn lexer<'a>()
         .then_ignore(just('\n').or_not())
         .ignored();
     
-    // Multi-line comments: /* ... */
     let multi_line_comment = just('/').then(just('*'))
         .ignore_then(any().and_is(just('*').then(just('/')).not()).repeated())
         .then_ignore(just('*'))
@@ -752,11 +744,9 @@ let test_name = users | .name == "Bob";"#;
 
     #[test]
     fn test_multi_line_comment() {
-        // Test without space after comment
         let result1 = lexer().parse("/* comment */let x = 5;");
         assert!(result1.output().is_some(), "Should parse comment without space");
         
-        // Test with space after comment
         let result2 = lexer().parse("/* comment */ let x = 5;");
         if let Some(tokens) = result2.output() {
             let token_vec: Vec<Token> = tokens.iter().map(|(tok, _)| tok.clone()).collect();

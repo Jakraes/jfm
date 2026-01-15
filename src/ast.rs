@@ -37,11 +37,8 @@ pub enum ArrayElement {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjectEntry {
     Field { key: String, value: Expr },
-    /// A nested path field like `downlink.subcell_id: value`
     PathField { path: Vec<String>, value: Expr },
-    /// Shorthand property like `{ name }` meaning `{ name: name }`
     Shorthand { name: String },
-    /// Projection shorthand like `{ .name }` meaning `{ name: @.name }`
     Projection { field: String },
     Spread(Expr),
 }
@@ -157,25 +154,20 @@ pub enum ExprKind {
         arms: Vec<(MatchPattern, Expr)>,
     },
     Grouped(Box<Expr>),
-    /// Method call like `arr.sum()` or `obj.method(args)` 
-    /// Stored as (object, method_name, args)
     MethodCall {
         object: Box<Expr>,
         method: String,
         args: Vec<Expr>,
     },
-    /// Module access like `math::add(1, 2)` for calling module functions
     ModuleCall {
         module: Box<Expr>,
         function: String,
         args: Vec<Expr>,
     },
-    /// As binding like `@ as name` - binds expression result to name
     AsBinding {
         expr: Box<Expr>,
         name: Rc<str>,
     },
-    /// Replication like `3 * { id: @ }` - creates array with @ as index
     Replicate {
         count: Box<Expr>,
         template: Box<Expr>,

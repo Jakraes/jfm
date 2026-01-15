@@ -1,12 +1,8 @@
-//! Miscellaneous built-in functions (IO, Math, Types).
-
 use crate::value::Value;
 use super::super::error::InterpreterError;
 use super::{require_args, with_number, with_string};
 use std::cell::RefCell;
 use std::rc::Rc;
-
-// IO functions
 
 pub fn builtin_print(
     args: &[Value],
@@ -35,8 +31,6 @@ pub fn builtin_input(args: &[Value]) -> Result<Value, InterpreterError> {
         .map_err(|e| InterpreterError::invalid_operation(format!("Failed to read input: {}", e)))?;
     Ok(Value::String(Rc::from(input.trim_end_matches(['\n', '\r']))))
 }
-
-// Math functions
 
 macro_rules! unary_math {
     ($name:ident, $op:ident) => {
@@ -82,8 +76,6 @@ pub fn builtin_random(_args: &[Value]) -> Result<Value, InterpreterError> {
     use rand::Rng;
     Ok(Value::Number(rand::thread_rng().r#gen::<f64>(), true))
 }
-
-// Type functions
 
 macro_rules! type_check {
     ($name:ident, $pattern:pat) => {

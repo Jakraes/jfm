@@ -410,10 +410,6 @@ fn test_compact_output_preserves_validity() {
     assert!(parsed.is_ok(), "Compact output should be valid JSON");
 }
 
-// ============================================
-// --limit flag tests
-// ============================================
-
 #[test]
 fn test_limit_flag_basic() {
     let json = r#"[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]"#;
@@ -568,13 +564,8 @@ fn test_limit_with_filter_query() {
     assert_eq!(arr.len(), 2, "Should have 2 filtered results with --limit 2");
 }
 
-// ============================================
-// --stream flag tests
-// ============================================
-
 #[test]
 fn test_stream_flag_ndjson() {
-    // Newline-delimited JSON (NDJSON)
     let ndjson = "{\"name\":\"Alice\",\"value\":1}\n{\"name\":\"Bob\",\"value\":2}\n{\"name\":\"Charlie\",\"value\":3}";
     let query = "root.name;";
     
@@ -700,7 +691,6 @@ fn test_stream_requires_query() {
 
 #[test]
 fn test_stream_empty_lines_ndjson() {
-    // NDJSON with empty lines should be handled gracefully
     let ndjson = "{\"x\":1}\n\n{\"x\":2}\n\n\n{\"x\":3}";
     let query = "root.x;";
     
@@ -730,7 +720,6 @@ fn test_stream_empty_lines_ndjson() {
 
 #[test]
 fn test_stream_single_object() {
-    // Stream mode with a single object (not array, not NDJSON) should still work
     let json = r#"{"name": "test", "value": 42}"#;
     let query = "root.value;";
     

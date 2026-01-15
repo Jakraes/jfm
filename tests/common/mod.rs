@@ -1,17 +1,13 @@
-//! Shared test utilities for all test modules
-
 use jfm::interpreter::parse_and_run;
 use jfm::Value;
 use std::rc::Rc;
 use std::cell::RefCell;
 use indexmap::IndexMap;
 
-/// Create an empty root object
 pub fn empty_root() -> Value {
     Value::Object(Rc::new(RefCell::new(IndexMap::new())))
 }
 
-/// Create a test root with a numbers array
 pub fn make_test_array() -> Value {
     let arr = vec![
         Value::Number(5.0, false),
@@ -26,7 +22,6 @@ pub fn make_test_array() -> Value {
     Value::Object(Rc::new(RefCell::new(root)))
 }
 
-/// Create a test root with a users array
 pub fn make_user_array() -> Value {
     let mut root = IndexMap::new();
     let mut users = Vec::new();
@@ -49,7 +44,6 @@ pub fn make_user_array() -> Value {
     Value::Object(Rc::new(RefCell::new(root)))
 }
 
-/// Create a simple test root with basic user data
 pub fn make_test_root() -> Value {
     let mut root_obj = IndexMap::new();
 
@@ -74,7 +68,6 @@ pub fn make_test_root() -> Value {
     Value::Object(Rc::new(RefCell::new(root_obj)))
 }
 
-/// Create a test root with simple key-value pairs (for io.rs tests)
 pub fn make_simple_test_root() -> Value {
     let mut root_obj = IndexMap::new();
     root_obj.insert("name".to_string(), Value::String(Rc::from("Alice")));
@@ -83,7 +76,6 @@ pub fn make_simple_test_root() -> Value {
     Value::Object(Rc::new(RefCell::new(root_obj)))
 }
 
-/// Create a complex test root with users and employees
 pub fn make_complex_root() -> Value {
     let mut root_obj = IndexMap::new();
 
@@ -122,7 +114,6 @@ pub fn make_complex_root() -> Value {
     Value::Object(Rc::new(RefCell::new(root_obj)))
 }
 
-/// Create a test root for include.rs tests (with users and multiplier)
 pub fn make_include_test_root() -> Value {
     let mut root_obj = IndexMap::new();
     
@@ -149,7 +140,6 @@ pub fn make_include_test_root() -> Value {
     Value::Object(Rc::new(RefCell::new(root_obj)))
 }
 
-/// Create a simple test object (for object function tests)
 pub fn make_test_object() -> Value {
     let mut obj = IndexMap::new();
     obj.insert("name".to_string(), Value::String(Rc::from("Alice")));
@@ -158,14 +148,12 @@ pub fn make_test_object() -> Value {
     Value::Object(Rc::new(RefCell::new(obj)))
 }
 
-/// Run a query and return the result, panicking on error
 pub fn run_query(query: &str) -> Value {
     parse_and_run(query, empty_root())
         .expect("Query should succeed")
         .expect("Query should return a value")
 }
 
-/// Convert a Value to a JSON-like string representation for testing
 pub fn value_to_json(val: &Value) -> String {
     match val {
         Value::Null => "null".to_string(),

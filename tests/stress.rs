@@ -1,13 +1,9 @@
-//! Stress tests for jfm interpreter
-//! Tests performance and correctness under heavy load
-
 use jfm::interpreter::parse_and_run;
 use jfm::Value;
 use std::rc::Rc;
 use std::cell::RefCell;
 use indexmap::IndexMap;
 
-/// Create a large dataset with N users
 fn make_large_dataset(n: usize) -> Value {
     let mut root_obj = IndexMap::new();
     let mut users = Vec::with_capacity(n);
@@ -27,7 +23,6 @@ fn make_large_dataset(n: usize) -> Value {
     Value::Object(Rc::new(RefCell::new(root_obj)))
 }
 
-/// Create deeply nested object structure
 fn make_deeply_nested(depth: usize) -> Value {
     let mut current = Value::Number(42.0, false);
     for i in (0..depth).rev() {
@@ -40,10 +35,6 @@ fn make_deeply_nested(depth: usize) -> Value {
     root.insert("nested".to_string(), current);
     Value::Object(Rc::new(RefCell::new(root)))
 }
-
-// =============================================================================
-// LARGE DATASET TESTS
-// =============================================================================
 
 #[test]
 fn test_stress_filter_1000_users() {
@@ -105,7 +96,6 @@ fn test_stress_sort_by_1000_users() {
     let arr = result.as_array().unwrap();
     assert_eq!(arr.len(), 1000);
     
-    // Verify sorting is correct
     let first_score = arr[0].as_object().unwrap().get("score").unwrap().as_number().unwrap();
     let last_score = arr[999].as_object().unwrap().get("score").unwrap().as_number().unwrap();
     assert!(first_score <= last_score, "Should be sorted ascending");
@@ -143,10 +133,6 @@ fn test_stress_slice_from_large_array() {
     assert_eq!(arr.len(), 100);
 }
 
-// =============================================================================
-// LARGE RANGE TESTS
-// =============================================================================
-
 #[test]
 fn test_stress_range_1000() {
     let source = "0..999;";
@@ -167,7 +153,6 @@ fn test_stress_range_5000() {
 fn test_stress_range_sum() {
     let source = "sum(1..1000);";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    // Sum of 1 to 1000 = 1000 * 1001 / 2 = 500500
     assert_eq!(result.as_number().unwrap(), 500500.0);
 }
 
@@ -179,16 +164,11 @@ fn test_stress_range_filter() {
     assert_eq!(arr.len(), 500, "Should have 500 even numbers");
 }
 
-// =============================================================================
-// NESTED STRUCTURE TESTS
-// =============================================================================
-
 #[test]
 fn test_stress_deeply_nested_access() {
     let root = make_deeply_nested(20);
     let source = "root.nested.level0.level1.level2.level3.level4.depth;";
     let result = parse_and_run(source, root).unwrap().unwrap();
-    // We access level0.level1.level2.level3.level4, which is depth 5
     assert_eq!(result.as_number().unwrap(), 5.0);
 }
 
@@ -204,7 +184,6 @@ fn test_stress_nested_loops() {
         result;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    // 0..49 gives 50 elements, 50*50=2500
     assert_eq!(result.as_number().unwrap(), 2500.0);
 }
 
@@ -222,13 +201,8 @@ fn test_stress_triple_nested_loops() {
         result;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    // 0..9 gives 10 elements, 10*10*10=1000
     assert_eq!(result.as_number().unwrap(), 1000.0);
 }
-
-// =============================================================================
-// CHAIN OPERATIONS TESTS
-// =============================================================================
 
 #[test]
 fn test_stress_chained_filters() {
@@ -269,10 +243,6 @@ fn test_stress_complex_aggregation() {
     assert_eq!(obj.get("length").unwrap().as_number().unwrap(), 500.0);
 }
 
-// =============================================================================
-// MEMORY STRESS TESTS
-// =============================================================================
-
 #[test]
 fn test_stress_large_array_creation() {
     let source = r#"
@@ -283,7 +253,6 @@ fn test_stress_large_array_creation() {
         arr.length;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    // 0..999 gives 1000 elements
     assert_eq!(result.as_number().unwrap(), 1000.0);
 }
 
@@ -297,7 +266,6 @@ fn test_stress_string_concatenation() {
         s;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    // 0..99 gives 100 iterations
     assert_eq!(result.as_string().unwrap().len(), 100);
 }
 
@@ -311,13 +279,8 @@ fn test_stress_array_concatenation() {
         arr.length;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    // 0..99 gives 100 elements
     assert_eq!(result.as_number().unwrap(), 100.0);
 }
-
-// =============================================================================
-// ARITHMETIC STRESS TESTS
-// =============================================================================
 
 #[test]
 fn test_stress_large_calculations() {
@@ -329,7 +292,6 @@ fn test_stress_large_calculations() {
         result;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    // Sum of squares from 1 to 1000 (inclusive range)
     let expected: f64 = (1..=1000).map(|i: i64| (i * i) as f64).sum();
     assert_eq!(result.as_number().unwrap(), expected);
 }
@@ -348,10 +310,6 @@ fn test_stress_power_calculations() {
     assert_eq!(arr[0].as_number().unwrap(), 2.0);
     assert_eq!(arr[9].as_number().unwrap(), 1024.0);
 }
-
-// =============================================================================
-// CONDITIONAL STRESS TESTS
-// =============================================================================
 
 #[test]
 fn test_stress_many_conditionals() {
@@ -391,13 +349,8 @@ fn test_stress_nested_conditionals() {
         count;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    // Numbers divisible by 2, 3, and 5 (i.e., 30) from 0 to 99: 0, 30, 60, 90 = 4
     assert_eq!(result.as_number().unwrap(), 4.0);
 }
-
-// =============================================================================
-// ASSIGNMENT STRESS TESTS
-// =============================================================================
 
 #[test]
 fn test_stress_assignments() {
@@ -409,7 +362,6 @@ fn test_stress_assignments() {
         x;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    // 0..999 gives 1000 iterations
     assert_eq!(result.as_number().unwrap(), 1000.0);
 }
 
@@ -425,15 +377,8 @@ fn test_stress_mixed_assignments() {
         x;
     "#;
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    // Each iteration: +10, -5 = +5, then *1 = no change
-    // 0..99 gives 100 iterations
-    // 1000 + 100 * 5 = 1500
     assert_eq!(result.as_number().unwrap(), 1500.0);
 }
-
-// =============================================================================
-// PIPE OPERATOR STRESS TESTS  
-// =============================================================================
 
 #[test]
 fn test_stress_pipe_transform_large() {

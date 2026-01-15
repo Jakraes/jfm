@@ -41,8 +41,6 @@ fn value_to_json(val: &Value) -> String {
     }
 }
 
-// ============ REPLICATE TESTS ============
-
 #[test]
 fn test_replicate_basic() {
     let result = run_query("replicate(5, i => i);");
@@ -67,8 +65,6 @@ fn test_replicate_zero() {
     assert_eq!(value_to_json(&result), "[]");
 }
 
-// ============ ENUMERATE TESTS ============
-
 #[test]
 fn test_enumerate_basic() {
     let result = run_query(r#"enumerate(["a", "b", "c"]);"#);
@@ -86,8 +82,6 @@ fn test_enumerate_numbers() {
     let result = run_query("enumerate([10, 20, 30]);");
     assert_eq!(value_to_json(&result), "[[0,10],[1,20],[2,30]]");
 }
-
-// ============ RANGE FUNCTION TESTS ============
 
 #[test]
 fn test_range_fn_basic() {
@@ -113,8 +107,6 @@ fn test_range_fn_floats() {
     assert_eq!(value_to_json(&result), "[0,0.25,0.5,0.75,1]");
 }
 
-// ============ DEEP_MERGE TESTS ============
-
 #[test]
 fn test_deep_merge_basic() {
     let result = run_query("deep_merge({ a: 1 }, { b: 2 });");
@@ -138,8 +130,6 @@ fn test_deep_merge_deeply_nested() {
     let result = run_query("deep_merge({ a: { b: { c: 1 } } }, { a: { b: { d: 2 } } });");
     assert_eq!(value_to_json(&result), r#"{"a":{"b":{"c":1,"d":2}}}"#);
 }
-
-// ============ CROSS TESTS ============
 
 #[test]
 fn test_cross_two_arrays() {
@@ -165,8 +155,6 @@ fn test_cross_single_array() {
     assert_eq!(value_to_json(&result), "[[1],[2],[3]]");
 }
 
-// ============ SET_PATH TESTS ============
-
 #[test]
 fn test_set_path_basic() {
     let result = run_query(r#"set_path({ a: 1 }, "b", 2);"#);
@@ -191,8 +179,6 @@ fn test_set_path_add_to_existing() {
     assert_eq!(value_to_json(&result), r#"{"a":{"x":1,"y":2}}"#);
 }
 
-// ============ CLONE TESTS ============
-
 #[test]
 fn test_clone_basic() {
     let result = run_query("let a = { x: 1 }; let b = clone(a); b.x = 99; a.x;");
@@ -204,8 +190,6 @@ fn test_clone_array() {
     let result = run_query("let a = [1, 2, 3]; let b = clone(a); push(b, 4); a.length;");
     assert_eq!(value_to_json(&result), "3");
 }
-
-// ============ SPREAD TESTS ============
 
 #[test]
 fn test_object_spread_basic() {
@@ -248,8 +232,6 @@ fn test_array_spread_multiple() {
     let result = run_query("let a = [1, 2]; let b = [3, 4]; [...a, ...b];");
     assert_eq!(value_to_json(&result), "[1,2,3,4]");
 }
-
-// ============ COMBINED FEATURE TESTS ============
 
 #[test]
 fn test_replicate_with_deep_merge() {

@@ -8,13 +8,10 @@ use chumsky::Parser;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// Variable name for the pipe context (the current item being processed)
 pub const PIPE_CONTEXT: &str = "@";
 
-/// Variable name for the root JSON value
 pub const ROOT_CONTEXT: &str = "root";
 
-/// Control flow for statement execution
 #[derive(Debug, Clone)]
 pub enum ControlFlow {
     Next,
@@ -24,9 +21,6 @@ pub enum ControlFlow {
     Continue,
 }
 
-/// Represents a segment in an access path for nested field/index operations.
-/// For example, `.items[0].active` would be represented as:
-/// `[Field("items"), Index(0), Field("active")]`
 #[derive(Debug, Clone)]
 enum AccessPathSegment {
     Field(String),
@@ -74,19 +68,12 @@ impl Interpreter {
                 }
             }
         }
-        // If no explicit value was returned, return root as default
         if last_val.is_none() {
             last_val = self.env.get(ROOT_CONTEXT);
         }
         Ok(last_val)
     }
 
-    /// Execute a loop body (for/while) and handle control flow.
-    /// Returns:
-    /// - Ok(Some(ControlFlow::Return(val))) if return was hit
-    /// - Ok(Some(ControlFlow::Break)) if break was hit  
-    /// - Ok(Some(ControlFlow::Continue)) if continue was hit
-    /// - Ok(None) for normal completion
     fn execute_loop_body(&mut self, body: &[Stmt]) -> Result<Option<ControlFlow>, InterpreterError> {
         for stmt in body {
             match self.execute_statement(stmt)? {
@@ -108,7 +95,6 @@ impl Interpreter {
             }
             Stmt::Const { name, value } => {
                 let val = self.evaluate(value)?;
-                // Check if const already exists (immutable)
                 if self.env.get(name.as_ref()).is_some() {
                     return Err(InterpreterError::invalid_operation(format!(
                         "Cannot redeclare const '{}'",
@@ -120,7 +106,6 @@ impl Interpreter {
             }
             Stmt::Expr(expr) => {
                 let val = self.evaluate(expr)?;
-                // Assignments are side-effect statements, don't treat as return values
                 if matches!(expr.kind, ExprKind::Assignment { .. }) {
                     Ok(ControlFlow::Next)
                 } else {
@@ -231,12 +216,9 @@ impl Interpreter {
             ExprKind::Literal(val) => Ok(val.clone()),
 
             ExprKind::Identifier(name) => {
-                // First try environment
                 if let Some(val) = self.env.get(name.as_ref()) {
                     Ok(val)
                 } else if let Some(pipe_val) = self.env.get(PIPE_CONTEXT) {
-                    // If not in environment and we're in pipe context, try implicit @ lookup
-                    // This handles expressions like `age >= 18` in `{ adult: age >= 18 }`
                     match self.get_field(&pipe_val, name.as_ref()) {
                         Ok(field_val) if !matches!(field_val, Value::Null) => Ok(field_val),
                         _ => Err(InterpreterError::undefined_variable_at(name.to_string(), expr.span)),
@@ -277,17 +259,12 @@ impl Interpreter {
             }
 
             ExprKind::Binary { left, op, right } => {
-                // Special case: n * expr for replication
-                // Applies when: left is a number AND right is NOT a simple expression that evaluates to a number
-                // (i.e., right is an object, array, or uses @)
                 if matches!(op, BinaryOp::Mul) {
                     let left_val = self.evaluate(left)?;
                     if let Value::Number(n, _) = &left_val {
-                        // Check if right looks like a replication template (object, array, or contains @)
                         let is_replication_template = self.is_replication_template(right);
                         
                         if is_replication_template {
-                            // It's replication: n * template - evaluate right for each iteration
                             let count = *n as usize;
                             let mut results = Vec::with_capacity(count);
                             for i in 0..count {
@@ -299,7 +276,6 @@ impl Interpreter {
                             }
                             return Ok(Value::Array(Rc::new(RefCell::new(results))));
                         }
-                        // Not a replication template, do normal evaluation
                     }
                 }
                 let left_val = self.evaluate(left)?;
@@ -313,46 +289,19 @@ impl Interpreter {
             }
 
             ExprKind::Pipe { left, right } => {
-                // Special case: `arr | @ as name` followed by another pipe
-                // Check if left is a Pipe ending with AsBinding
-                // If so, we need to handle this as a combined operation
                 if let ExprKind::Pipe { left: inner_left, right: inner_right } = &left.kind
                     && let ExprKind::AsBinding { name, .. } = &inner_right.kind {
-                        // Pattern: arr | @ as name | expr
-                        // Handle as a named lambda over the array
                         let arr_val = self.evaluate(inner_left)?;
                         return self.eval_pipe_with_named_binding(arr_val, name, right);
                     }
                 
-                // Count how many pipe operators are in the left side
                 let left_pipe_count = self.count_pipe_operators(left);
-                // The current step is left_pipe_count + 1 (the right side we're about to evaluate)
-                // For `a | b | c`: left is `a | b` (1 pipe), so current_step = 1 + 1 = 2
-                // But we want step 3 for `c`, so we need: left_pipe_count + 2
-                // Actually: if left has 1 pipe, that means it's `a | b`, so we've done steps 1 and 2
-                // The right side `c` is step 3, so: left_pipe_count + 2? No.
-                // Let's think: `a | b | c` = Pipe { left: Pipe { left: a, right: b }, right: c }
-                // When evaluating outer pipe:
-                //   - left is Pipe { left: a, right: b }, which has 1 pipe operator
-                //   - So left_pipe_count = 1
-                //   - Steps completed: a (step 1), b (step 2)
-                //   - Current step should be: 1 + left_pipe_count + 1 = 3
-                // Actually simpler: total steps = left_pipe_count + 2
-                // But we want the step number for the right side, which is: left_pipe_count + 2
                 let current_step = left_pipe_count + 2;
                 
-                // Evaluate the left side (which may itself be a pipe chain)
                 let left_val = match self.evaluate(left) {
                     Ok(val) => val,
                     Err(e) => {
-                        // If error occurred in left side, we need to determine which step it was
-                        // The left side could be a single expression or a pipe chain
-                        // For now, we'll use a simpler approach: if left is a pipe, recurse
-                        // Otherwise, it's step 1
                         let step_num = if matches!(left.kind, ExprKind::Pipe { .. }) {
-                            // If left is a pipe, the error occurred somewhere in that chain
-                            // We can't easily determine the exact step without more context
-                            // For now, use left_pipe_count + 1 as an approximation
                             left_pipe_count + 1
                         } else {
                             1
@@ -367,11 +316,9 @@ impl Interpreter {
                     }
                 };
                 
-                // Set pipe_step for the current step
                 let old_pipe_step = self.pipe_step;
                 self.pipe_step = Some(current_step);
                 
-                // Evaluate the right side with error wrapping
                 let result = match self.apply_pipe_operation(left_val, right) {
                     Ok(val) => Ok(val),
                     Err(e) => {
@@ -385,34 +332,25 @@ impl Interpreter {
                     }
                 };
                 
-                // Restore pipe_step
                 self.pipe_step = old_pipe_step;
                 result
             }
 
             ExprKind::PipeUpdate { left, path, value } => {
-                // Update pipe: left |~ path => value
-                // Evaluate left to get the object/array to update
                 let left_val = self.evaluate(left)?;
                 
-                // Extract path segments from the path expression (e.g., .field or [0])
                 let path_segments = extract_path_segments(path)
                     .ok_or_else(|| InterpreterError::type_error("PipeUpdate path must be a field access or array index"))?;
                 
-                // Get the current value at the path (for @ context)
                 let current_path_val = self.get_nested_path(&left_val, &path_segments)?;
                 
-                // Set @ to the current path value before evaluating the value expression
                 self.env.push_scope();
                 self.env.set(PIPE_CONTEXT.to_string(), current_path_val.clone());
                 
-                // Evaluate the new value (which can use @)
                 let new_val = self.evaluate(value)?;
                 
-                // Restore scope
                 self.env.pop_scope();
                 
-                // Clone the value to make it mutable, then update it
                 let updated = left_val.clone();
                 self.set_nested_path(&updated, &path_segments, new_val.clone())?;
                 
@@ -470,26 +408,20 @@ impl Interpreter {
                             }
                         }
                         ObjectEntry::PathField { path, value } => {
-                            // Handle nested path like `downlink.subcell_id: value`
                             let val = self.evaluate(value)?;
                             result = self.set_path_on_value(result, path, val)?;
                         }
                         ObjectEntry::Shorthand { name } => {
-                            // Handle shorthand like { name } meaning { name: name }
-                            // In pipe context, prefer @.name (implicit @) over variable lookup
                             let val = if let Some(pipe_val) = self.env.get(PIPE_CONTEXT) {
-                                // Try to get field from pipe context first (implicit @ in projections)
                                 match self.get_field(&pipe_val, &name) {
                                     Ok(field_val) if !matches!(field_val, Value::Null) => field_val,
                                     _ => {
-                                        // Fall back to variable lookup (regular shorthand)
                                         self.env.get(name.as_str())
                                             .ok_or_else(|| InterpreterError::undefined_variable(name.clone()))?
                                             .clone()
                                     }
                                 }
                             } else {
-                                // No pipe context, use variable lookup
                                 self.env.get(name.as_str())
                                     .ok_or_else(|| InterpreterError::undefined_variable(name.clone()))?
                                     .clone()
@@ -512,12 +444,10 @@ impl Interpreter {
                             }
                         }
                         ObjectEntry::Projection { field } => {
-                             // Projection { .name } -> { name: @.name }
-                             // Only works if PIPE_CONTEXT is available
                              if let Some(pipe_val) = self.env.get(PIPE_CONTEXT) {
                                  let val = match self.get_field(&pipe_val, field) {
                                      Ok(v) => v,
-                                     Err(_) => Value::Null, // Or undefined variable error? Usually projection allows nulls.
+                                     Err(_) => Value::Null,
                                  };
                                  if let Value::Object(map_rc) = &result {
                                      map_rc.borrow_mut().insert(field.clone(), val);
@@ -628,7 +558,6 @@ impl Interpreter {
                             }
                         }
                         MatchPattern::Range { start, end } => {
-                            // Range pattern: check if value is within range (inclusive)
                             let start_val = self.evaluate(start)?;
                             let end_val = self.evaluate(end)?;
                             
@@ -649,28 +578,23 @@ impl Interpreter {
             }
             
             ExprKind::MethodCall { object, method, args } => {
-                // Method call: obj.method(args) -> method(obj, args)
                 let obj_val = self.evaluate(object)?;
                 let mut all_args = vec![obj_val];
                 for a in args {
                     all_args.push(self.evaluate(a)?);
                 }
                 
-                // Try user-defined function first
                 if let Some(func_val) = self.env.get(method.as_str())
                     && let Value::Function(func) = func_val {
                         return self.call_user_function(&func, all_args);
                     }
                 
-                // Call builtin
                 self.call_function(method, all_args)
             }
             
             ExprKind::ModuleCall { module, function, args } => {
-                // Evaluate the module expression
                 let module_val = self.evaluate(module)?;
                 
-                // Get the function from the module
                 if let Value::Module(mod_ref) = module_val {
                     let func_val = mod_ref.get(function).ok_or_else(|| {
                         InterpreterError::invalid_operation_at(
@@ -679,13 +603,11 @@ impl Interpreter {
                         )
                     })?;
                     
-                    // Evaluate arguments
                     let mut arg_vals = Vec::new();
                     for a in args {
                         arg_vals.push(self.evaluate(a)?);
                     }
                     
-                    // Call the function
                     if let Value::Function(func) = func_val {
                         self.call_user_function(func, arg_vals)
                     } else {
@@ -703,14 +625,12 @@ impl Interpreter {
             }
             
             ExprKind::AsBinding { expr: inner, name } => {
-                // Evaluate and bind to name in current scope
                 let val = self.evaluate(inner)?;
                 self.env.set(name.to_string(), val.clone());
                 Ok(val)
             }
             
             ExprKind::Replicate { count, template } => {
-                // n * expr with @ as index
                 let count_val = self.evaluate(count)?;
                 let n = match count_val {
                     Value::Number(n, _) => n as usize,
@@ -739,9 +659,7 @@ impl Interpreter {
                 Ok(value)
             }
             ExprKind::FieldAccess { object, field } => {
-                // Check if this is a nested path starting from Null (short field/index access)
                 if let Some(path) = extract_path_segments(target) {
-                    // This is a short access chain like .profile.age or .items[0].name
                     if let Some(it_val) = self.env.get(PIPE_CONTEXT) {
                         self.set_nested_path(&it_val, &path, value.clone())?;
                         return Ok(value);
@@ -754,7 +672,6 @@ impl Interpreter {
                     return Err(InterpreterError::type_error("Cannot set field - no context object"));
                 }
                 
-                // Not a short field access chain, evaluate the object
                 let obj_val = self.evaluate(object)?;
                 match obj_val {
                     Value::Object(map_rc) => {
@@ -765,9 +682,7 @@ impl Interpreter {
                 }
             }
             ExprKind::ArrayIndex { array, index } => {
-                // Check if this is a nested path starting from Null (short field/index access)
                 if let Some(path) = extract_path_segments(target) {
-                    // This is a short access chain like .items[0] or .data[0].value
                     if let Some(it_val) = self.env.get(PIPE_CONTEXT) {
                         self.set_nested_path(&it_val, &path, value.clone())?;
                         return Ok(value);
@@ -805,7 +720,6 @@ impl Interpreter {
     }
     
     fn apply_pipe_operation(&mut self, left: Value, right: &Expr) -> Result<Value, InterpreterError> {
-        // Check if the right side is a short array index [n] - index the result directly
         if let ExprKind::ArrayIndex { array, index } = &right.kind
             && matches!(array.kind, ExprKind::Literal(Value::Null)) {
                 let idx = self.evaluate(index)?;
@@ -816,42 +730,28 @@ impl Interpreter {
                 return Ok(val);
             }
         
-        // Check if the right side is `@ as name | expr` - like a named lambda
-        // This handles: arr | @ as x | expr where x is bound per element
         if let ExprKind::Pipe { left: binding_expr, right: body } = &right.kind
             && let ExprKind::AsBinding { expr: inner, name } = &binding_expr.kind {
-                // Treat `arr | @ as x | expr` like a named lambda
                 return self.eval_pipe_with_as_binding(left, inner, name, body);
             }
         
-        // NOTE: `@ as name` bindings are handled in the general iteration logic below
-        // This ensures per-element binding for arrays
-        
-        // Check if the right side is a lambda - use it for map/filter
         if let ExprKind::Lambda { params, body } = &right.kind {
             return self.eval_pipe_with_lambda(left, params, body);
         }
         
-        // Check if the right side is a bare identifier - call as function with left as arg
-        // This allows: arr | sum, arr | flat, str | upper
         if let ExprKind::Identifier(name) = &right.kind {
-            // Don't treat @ or other special vars as functions
             if name.as_ref() != "@" && name.as_ref() != "root" {
-                // Try user-defined function
                 if let Some(func_val) = self.env.get(name.as_ref())
                     && let Value::Function(func) = func_val {
                         return self.call_user_function(&func, vec![left]);
                     }
-                // Try builtin
                 if let Ok(result) = self.call_function(name, vec![left.clone()]) {
                     return Ok(result);
                 }
             }
         }
         
-        // Check if the right side is a method call - call with left prepended
         if let ExprKind::MethodCall { object, method, args } = &right.kind {
-            // Evaluate object in context of left
             self.env.push_scope();
             self.env.set(PIPE_CONTEXT.to_string(), left.clone());
             let obj_val = self.evaluate(object)?;
@@ -868,7 +768,6 @@ impl Interpreter {
             return self.call_function(method, all_args);
         }
         
-        // Check if the right side is a function call - if so, prepend left as first argument
         if let ExprKind::Call { name, args } = &right.kind {
             let mut arg_vals = vec![left];
             for a in args {
@@ -883,12 +782,8 @@ impl Interpreter {
             return self.call_function(name, arg_vals);
         }
         
-        // Check if expression is a binary operation on a short field/index access (.field + 2, .profile.age + 5, or .items[0] + 1)
-        // These should automatically mutate the field and return the modified object
-        // This makes `.id + 2` equivalent to `.id += 2` in pipe context
         let mutation_info = get_pipe_mutation_info(right);
 
-        // Check if expression is an assignment on a short field/index access (.field = value, .profile.age = value, or .items[0] = value)
         let assignment_path = get_pipe_assignment_path(right);
         
         match left {
@@ -973,8 +868,6 @@ impl Interpreter {
         }
     }
     
-    /// Evaluate a pipe chain with a named binding: `arr | @ as name | expr`
-    /// For each element, binds name to the element and evaluates the body expression
     fn eval_pipe_with_named_binding(&mut self, left: Value, name: &Rc<str>, body: &Expr) -> Result<Value, InterpreterError> {
         match left {
             Value::Array(items_rc) => {
@@ -986,7 +879,6 @@ impl Interpreter {
                     self.env.set(name.to_string(), item.clone());
                     self.env.set(PIPE_CONTEXT.to_string(), item.clone());
                     
-                    // Evaluate the body (which could be any expression or another pipe)
                     let res = self.evaluate(body)?;
                     
                     match res {
@@ -1013,8 +905,6 @@ impl Interpreter {
         }
     }
     
-    /// Evaluate a pipe with an `as` binding: `arr | @ as name | expr`
-    /// For each element, binds name to the element and continues piping
     fn eval_pipe_with_as_binding(&mut self, left: Value, _inner: &Expr, name: &Rc<str>, body: &Expr) -> Result<Value, InterpreterError> {
         match left {
             Value::Array(items_rc) => {
@@ -1053,7 +943,6 @@ impl Interpreter {
         }
     }
     
-    /// Evaluate a pipe with a lambda - handles both map and filter based on return type
     fn eval_pipe_with_lambda(&mut self, left: Value, params: &[Param], body: &Expr) -> Result<Value, InterpreterError> {
         match left {
             Value::Array(items_rc) => {
@@ -1099,8 +988,6 @@ impl Interpreter {
         }
     }
 
-    /// Count the number of pipe operations in a pipe chain.
-    /// For `a | b | c`, this returns 2 (2 pipe operators, so 3 steps total).
     fn count_pipe_operators(&self, expr: &Expr) -> usize {
         match &expr.kind {
             ExprKind::Pipe { left, .. } => {
@@ -1110,9 +997,6 @@ impl Interpreter {
         }
     }
 
-    /// Get a string representation of an expression for error messages
-    /// This is a simplified version - in a real implementation, you might want to
-    /// reconstruct the source from the span or store source text
     fn expr_to_string(&self, expr: &Expr) -> String {
         match &expr.kind {
             ExprKind::Identifier(name) => name.to_string(),
@@ -1152,11 +1036,10 @@ impl Interpreter {
     }
 }
 
-/// Extract path segments from an expression (for short field/index access like .field or .items[0])
 fn extract_path_segments(expr: &Expr) -> Option<Vec<AccessPathSegment>> {
     fn extract_recursive(expr: &Expr, segments: &mut Vec<AccessPathSegment>) -> bool {
         match &expr.kind {
-            ExprKind::Literal(Value::Null) => true, // Base case for short access
+            ExprKind::Literal(Value::Null) => true,
             ExprKind::FieldAccess { object, field } => {
                 if extract_recursive(object, segments) {
                     segments.push(AccessPathSegment::Field(field.clone()));
@@ -1202,10 +1085,8 @@ fn extract_path_segments(expr: &Expr) -> Option<Vec<AccessPathSegment>> {
     }
 }
 
-/// Extract mutation info from a binary expression on a short path (e.g., .field + 2)
 fn get_pipe_mutation_info(expr: &Expr) -> Option<(Vec<AccessPathSegment>, BinaryOp, Expr)> {
-    if let ExprKind::Binary { left, op, right } = &expr.kind {
-        // Only handle arithmetic operations
+        if let ExprKind::Binary { left, op, right } = &expr.kind {
         if matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod) {
             if let Some(path) = extract_path_segments(left) {
                 return Some((path, op.clone(), *right.clone()));
@@ -1215,7 +1096,6 @@ fn get_pipe_mutation_info(expr: &Expr) -> Option<(Vec<AccessPathSegment>, Binary
     None
 }
 
-/// Extract assignment path from an assignment expression (e.g., .field = value)
 fn get_pipe_assignment_path(expr: &Expr) -> Option<Vec<AccessPathSegment>> {
     if let ExprKind::Assignment { target, .. } = &expr.kind {
         extract_path_segments(target)
@@ -1225,7 +1105,6 @@ fn get_pipe_assignment_path(expr: &Expr) -> Option<Vec<AccessPathSegment>> {
 }
 
 impl Interpreter {
-    /// Get a value at a nested path (fields and/or array indices) from an object
     fn get_nested_path(&self, obj: &Value, path: &[AccessPathSegment]) -> Result<Value, InterpreterError> {
         if path.is_empty() {
             return Ok(obj.clone());
@@ -1248,14 +1127,12 @@ impl Interpreter {
         Ok(current)
     }
     
-    /// Set a value at a nested path (fields and/or array indices), modifying it in place
     fn set_nested_path(&self, obj: &Value, path: &[AccessPathSegment], value: Value) -> Result<(), InterpreterError> {
         if path.is_empty() {
             return Err(InterpreterError::invalid_operation("Cannot set empty path"));
         }
         
         if path.len() == 1 {
-            // Single segment - set directly
             return match &path[0] {
                 AccessPathSegment::Field(field) => {
                     if let Value::Object(map_rc) = obj {
@@ -1274,7 +1151,6 @@ impl Interpreter {
             };
         }
         
-        // Navigate to the parent container, then set the final segment
         let parent_path = &path[..path.len() - 1];
         let parent = self.get_nested_path(obj, parent_path)?;
         
@@ -1320,8 +1196,6 @@ impl Interpreter {
         }
     }
     
-    /// Set a value at a dot-separated path on an object, creating nested objects as needed.
-    /// Used for object literal path fields like `{ downlink.subcell_id: value }`.
     fn set_path_on_value(&self, obj: Value, path: &[String], value: Value) -> Result<Value, InterpreterError> {
         if path.is_empty() {
             return Ok(value);
@@ -1367,11 +1241,9 @@ impl Interpreter {
         match obj {
             Value::Object(map_rc) => {
                 let map = map_rc.borrow();
-                // Check if current object has field
                 if let Some(val) = map.get(field) {
                     results.push(val.clone());
                 }
-                // Recurse into children values
                 for v in map.values() {
                     self.deep_find_recursive(v, field, results);
                 }
@@ -1394,7 +1266,6 @@ impl Interpreter {
     }
 
     fn call_function(&mut self, name: &str, args: Vec<Value>) -> Result<Value, InterpreterError> {
-        // Functions that need closures for callbacks
         if matches!(name, "find" | "find_index" | "reduce" | "every" | "some" | "replicate" | "flat_map") {
             return match name {
                 "find" => builtins::builtin_find(&args, |func, call_args| self.call_function_value(func, call_args)),
@@ -1409,12 +1280,10 @@ impl Interpreter {
         }
         
         match name {
-            // Note: "count" has been removed - use .length property instead
             "sum" => builtins::builtin_sum(&args),
             "avg" => builtins::builtin_avg(&args),
             "min" => builtins::builtin_min(&args),
             "max" => builtins::builtin_max(&args),
-            // Note: "take" has been removed - use slice(arr, 0, n) instead
             "push" => builtins::builtin_push(&args),
             "input" => builtins::builtin_input(&args),
             "print" => builtins::builtin_print(&args, |v| value_to_string(v)),
@@ -1482,7 +1351,6 @@ impl Interpreter {
     }
 
     fn call_user_function(&mut self, func: &Function, args: Vec<Value>) -> Result<Value, InterpreterError> {
-        // Check if we have too many arguments
         if args.len() > func.params.len() {
              return Err(InterpreterError::invalid_operation(format!(
                 "Function expects at most {} arguments, got {}",
@@ -1580,20 +1448,16 @@ impl Interpreter {
                 .parse()
                 .map_err(|e| InterpreterError::invalid_operation(format!("Parser error in imported module: {}", e)))?;
             
-            // Create a new interpreter to execute the module in isolation
             let mut module_interpreter = Interpreter::new();
             module_interpreter.run(stmts)?;
             
-            // Extract all functions and variables from the module's environment
             let mut exports: IndexMap<String, Value> = IndexMap::new();
             for (name, value) in module_interpreter.env.get_all_bindings() {
-                // Export functions and other values (but skip @ and root)
                 if name != PIPE_CONTEXT && name != ROOT_CONTEXT {
                     exports.insert(name, value);
                 }
             }
             
-            // Extract module name from path
             let module_name = std::path::Path::new(path.as_ref())
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -1624,7 +1488,6 @@ impl Interpreter {
                 }
             }
             Value::Null => {
-                // First try @ (for pipe context)
                 if let Some(it) = self.env.get(PIPE_CONTEXT)
                     && let Value::Object(map) = it {
                         return map.borrow().get(field).cloned()
@@ -1648,7 +1511,6 @@ impl Interpreter {
         match (arr, idx) {
             (Value::Array(items), Value::Number(n, _)) => {
                 let len = items.borrow().len();
-                // Handle negative indices: -1 is last element, -2 is second to last, etc.
                 let index = if *n < 0.0 {
                     let neg_idx = (-*n) as usize;
                     if neg_idx > len {
@@ -1665,7 +1527,6 @@ impl Interpreter {
                     .ok_or_else(|| InterpreterError::index_out_of_bounds(index, len))
             }
             (Value::Null, Value::Number(n, _)) => {
-                // Try pipe context first (for [n] in pipe operations)
                 if let Some(it) = self.env.get(PIPE_CONTEXT)
                     && let Value::Array(items) = it {
                         let len = items.borrow().len();
@@ -1684,7 +1545,6 @@ impl Interpreter {
                             .cloned()
                             .ok_or_else(|| InterpreterError::index_out_of_bounds(index, len));
                     }
-                // Fall back to root
                 if let Some(root) = self.env.get(ROOT_CONTEXT)
                     && let Value::Array(items) = root {
                         let len = items.borrow().len();
@@ -1772,25 +1632,11 @@ impl Interpreter {
         }
     }
 
-    fn values_equal(&self, a: &Value, b: &Value) -> bool {
-        match (a, b) {
-            (Value::Null, Value::Null) => true,
-            (Value::Bool(a), Value::Bool(b)) => a == b,
-            (Value::Number(a, _), Value::Number(b, _)) => a == b,
-            (Value::String(a), Value::String(b)) => a == b,
-            _ => false,
-        }
-    }
-
-    /// Check if an expression looks like a replication template (contains @, is an object, or is an array)
     fn is_replication_template(&self, expr: &Expr) -> bool {
         match &expr.kind {
-            // Objects and arrays are replication templates
             ExprKind::Object { .. } | ExprKind::ObjectWithSpread { .. } 
             | ExprKind::Array { .. } | ExprKind::ArrayWithSpread { .. } => true,
-            // @ by itself means we're using the index
             ExprKind::Identifier(name) if name.as_ref() == "@" => true,
-            // Check for @ usage in nested expressions
             ExprKind::FieldAccess { object, .. } => self.is_replication_template(object),
             ExprKind::Binary { left, right, .. } => {
                 self.is_replication_template(left) || self.is_replication_template(right)
@@ -1807,9 +1653,7 @@ impl Interpreter {
                     }
                 })
             }
-            // Lambdas with body containing @ - treat as template
             ExprKind::Lambda { body, .. } => self.is_replication_template(body),
-            // Otherwise it's probably a regular value
             _ => false,
         }
     }
@@ -1904,7 +1748,6 @@ mod tests {
 
     #[test]
     fn test_simple_assignment_returns_root() {
-        // When no explicit return, returns root by default
         let source = "let x = 5;";
         let result = parse_and_run(source, Value::Null).unwrap();
         assert_eq!(result, Some(Value::Null)); // Returns root (which is null)

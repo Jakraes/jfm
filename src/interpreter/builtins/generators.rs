@@ -1,5 +1,3 @@
-//! Generator built-in functions that create sequences of values.
-
 use crate::value::Value;
 use super::super::error::InterpreterError;
 use super::require_args;

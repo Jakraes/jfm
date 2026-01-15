@@ -13,7 +13,6 @@ pub enum Value {
     Array(Rc<RefCell<Vec<Value>>>),
     Object(Rc<RefCell<IndexMap<String, Value>>>),
     Function(Rc<Function>),
-    /// A module containing exported functions and variables
     Module(Rc<Module>),
 }
 
@@ -96,7 +95,6 @@ impl PartialEq for Function {
     }
 }
 
-/// A module containing exported functions and variables from an imported file
 #[derive(Debug, Clone)]
 pub struct Module {
     pub name: String,
@@ -116,8 +114,6 @@ impl Module {
     }
 }
 
-/// Shallow equality comparison for values.
-/// Only compares primitives directly, does not recurse into arrays/objects.
 pub fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Null, Value::Null) => true,
@@ -128,8 +124,6 @@ pub fn values_equal(a: &Value, b: &Value) -> bool {
     }
 }
 
-/// Deep equality comparison for values.
-/// Recursively compares arrays and objects.
 pub fn deep_equals(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Null, Value::Null) => true,
@@ -165,7 +159,6 @@ pub fn deep_equals(a: &Value, b: &Value) -> bool {
     }
 }
 
-/// Convert a value to a string representation.
 pub fn value_to_string(val: &Value) -> String {
     match val {
         Value::Null => "null".to_string(),
@@ -193,7 +186,6 @@ pub fn value_to_string(val: &Value) -> String {
     }
 }
 
-/// Convert a value to a display string (strings are quoted).
 pub fn value_to_display(val: &Value) -> String {
     match val {
         Value::String(s) => format!("\"{}\"", s),

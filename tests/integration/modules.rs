@@ -6,8 +6,6 @@ use std::fs::{self, File};
 use std::io::Write;
 use indexmap::IndexMap;
 
-// --- Helpers ---
-
 struct TempScript {
     path: String,
     escaped_path: String,
@@ -31,8 +29,6 @@ impl Drop for TempScript {
     }
 }
 
-// --- INCLUDE TESTS (from include.rs) ---
-
 #[test]
 fn test_include_basic() {
     let script = TempScript::new("simple", "let x = 42; x;").unwrap();
@@ -50,8 +46,6 @@ fn test_include_with_root() {
     let source = format!(r#"include("{}");"#, script.escaped_path);
     assert_eq!(parse_and_run(&source, root).unwrap().unwrap().as_number().unwrap(), 20.0);
 }
-
-// --- IMPORT TESTS (from include.rs) ---
 
 #[test]
 fn test_import_basic() {
