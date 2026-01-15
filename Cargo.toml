@@ -1,6 +1,6 @@
 [package]
 name = "jfm"
-version = "1.0.2"
+version = "1.2.1"
 edition = "2024"
 description = "A JSON query language interpreter"
 authors = ["Jakraes"]

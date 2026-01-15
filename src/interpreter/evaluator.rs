@@ -218,6 +218,12 @@ impl Interpreter {
             ExprKind::Identifier(name) => {
                 if let Some(val) = self.env.get(name.as_ref()) {
                     Ok(val)
+                } else if name.as_ref() == "@" {
+                    if let Some(pipe_val) = self.env.get(PIPE_CONTEXT) {
+                        Ok(pipe_val)
+                    } else {
+                        Err(InterpreterError::undefined_variable_at("@".to_string(), expr.span))
+                    }
                 } else if let Some(pipe_val) = self.env.get(PIPE_CONTEXT) {
                     match self.get_field(&pipe_val, name.as_ref()) {
                         Ok(field_val) if !matches!(field_val, Value::Null) => Ok(field_val),
@@ -263,8 +269,9 @@ impl Interpreter {
                     let left_val = self.evaluate(left)?;
                     if let Value::Number(n, _) = &left_val {
                         let is_replication_template = self.is_replication_template(right);
+                        let is_single_at = matches!(&right.kind, ExprKind::Identifier(name) if name.as_ref() == "@");
                         
-                        if is_replication_template {
+                        if is_replication_template && !is_single_at {
                             let count = *n as usize;
                             let mut results = Vec::with_capacity(count);
                             for i in 0..count {
@@ -724,9 +731,6 @@ impl Interpreter {
             && matches!(array.kind, ExprKind::Literal(Value::Null)) {
                 let idx = self.evaluate(index)?;
                 let val = self.get_index(&left, &idx)?;
-                if matches!(left, Value::Array(_)) {
-                    return Ok(Value::Array(Rc::new(RefCell::new(vec![val]))));
-                }
                 return Ok(val);
             }
         
