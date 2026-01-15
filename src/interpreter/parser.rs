@@ -103,6 +103,80 @@ impl TokenParser {
         self.tokens.get(self.current).map(|st| &st.token)
     }
 
+    /// Format a token for user-friendly error messages
+    fn format_token(token: &Token) -> String {
+        match token {
+            Token::Let => "let".to_string(),
+            Token::Const => "const".to_string(),
+            Token::For => "for".to_string(),
+            Token::In => "in".to_string(),
+            Token::If => "if".to_string(),
+            Token::Else => "else".to_string(),
+            Token::Return => "return".to_string(),
+            Token::While => "while".to_string(),
+            Token::Break => "break".to_string(),
+            Token::Continue => "continue".to_string(),
+            Token::Fn => "fn".to_string(),
+            Token::Match => "match".to_string(),
+            Token::As => "as".to_string(),
+            Token::Ident(s) => format!("identifier `{}`", s),
+            Token::Number(n, _) => format!("number `{}`", n),
+            Token::String(s) => format!("string \"{}\"", s),
+            Token::TemplateFull(s) => format!("template `{}`", s),
+            Token::True => "true".to_string(),
+            Token::False => "false".to_string(),
+            Token::Null => "null".to_string(),
+            Token::At => "@".to_string(),
+            Token::Plus => "+".to_string(),
+            Token::Minus => "-".to_string(),
+            Token::Star => "*".to_string(),
+            Token::Slash => "/".to_string(),
+            Token::Percent => "%".to_string(),
+            Token::Caret => "^".to_string(),
+            Token::Eq => "==".to_string(),
+            Token::NotEq => "!=".to_string(),
+            Token::Greater => ">".to_string(),
+            Token::Less => "<".to_string(),
+            Token::GreaterEq => ">=".to_string(),
+            Token::LessEq => "<=".to_string(),
+            Token::And => "&&".to_string(),
+            Token::Or => "||".to_string(),
+            Token::Bang => "!".to_string(),
+            Token::Pipe => "|".to_string(),
+            Token::PipeUpdate => "|~".to_string(),
+            Token::Assign => "=".to_string(),
+            Token::PlusAssign => "+=".to_string(),
+            Token::MinusAssign => "-=".to_string(),
+            Token::MulAssign => "*=".to_string(),
+            Token::DivAssign => "/=".to_string(),
+            Token::ModAssign => "%=".to_string(),
+            Token::DotDot => "..".to_string(),
+            Token::Arrow => "->".to_string(),
+            Token::Comma => ",".to_string(),
+            Token::Colon => ":".to_string(),
+            Token::DoubleColon => "::".to_string(),
+            Token::QuestionDot => "?.".to_string(),
+            Token::Question => "?".to_string(),
+            Token::NullCoalesce => "??".to_string(),
+            Token::Dot => ".".to_string(),
+            Token::Semicolon => ";".to_string(),
+            Token::LParen => "(".to_string(),
+            Token::RParen => ")".to_string(),
+            Token::LBrace => "{".to_string(),
+            Token::RBrace => "}".to_string(),
+            Token::LBracket => "[".to_string(),
+            Token::RBracket => "]".to_string(),
+        }
+    }
+
+    /// Format an Option<Token> for error messages
+    fn format_token_opt(token: Option<&Token>) -> String {
+        match token {
+            Some(t) => Self::format_token(t),
+            None => "end of input".to_string(),
+        }
+    }
+
     fn peek_token(&self) -> Option<&Token> {
         self.tokens.get(self.current + 1).map(|st| &st.token)
     }
@@ -141,13 +215,13 @@ impl TokenParser {
             }
             Some(token) => {
                 let err = ParseError::new("unexpected token", self.current_span())
-                    .with_expected(vec![format!("{:?}", expected)])
-                    .with_found(format!("{:?}", token));
+                    .with_expected(vec![Self::format_token(&expected)])
+                    .with_found(Self::format_token(token));
                 Err(err)
             }
             None => {
                 let err = ParseError::new("unexpected end of input", self.current_span())
-                    .with_expected(vec![format!("{:?}", expected)]);
+                    .with_expected(vec![Self::format_token(&expected)]);
                 Err(err)
             }
         }
@@ -349,7 +423,7 @@ impl TokenParser {
                 let span = other.as_ref().map(|st| st.span).unwrap_or(self.current_span());
                 return Err(ParseError::new("expected identifier in for loop", span)
                     .with_expected(vec!["identifier".to_string()])
-                    .with_found(format!("{:?}", other.map(|st| st.token))));
+                    .with_found(other.map(|st| Self::format_token(&st.token)).unwrap_or_else(|| "end of input".to_string())));
             }
         };
         self.expect(Token::In)?;
@@ -653,8 +727,8 @@ impl TokenParser {
                     // Accept either Arrow (->) or Assign (=) for pipe update syntax
                     if !matches!(self.current_token(), Some(Token::Arrow) | Some(Token::Assign)) {
                         let err = ParseError::new("unexpected token", self.current_span())
-                            .with_expected(vec!["Arrow".to_string(), "Assign".to_string()])
-                            .with_found(format!("{:?}", self.current_token()));
+                            .with_expected(vec!["->".to_string(), "=".to_string()])
+                            .with_found(Self::format_token_opt(self.current_token()));
                         return Err(err);
                     }
                     self.advance();
@@ -977,24 +1051,40 @@ impl TokenParser {
                 }
                 Some(Token::QuestionDot) => {
                     self.advance();
-                    let field_span = self.current_span();
-                    let field = match self.advance() {
-                        Some(SpannedToken { token: Token::Ident(field_name), .. }) => field_name,
-                        other => {
-                            return Err(ParseError::new(
-                                "expected field name after '?.'",
-                                other.map(|st| st.span).unwrap_or(field_span),
-                            ));
-                        }
-                    };
-                    let span = expr.span.merge(self.previous_span());
-                    expr = Expr {
-                        kind: ExprKind::OptionalFieldAccess {
-                            object: Box::new(expr),
-                            field,
-                        },
-                        span,
-                    };
+                    // Check for optional array index: ?.[
+                    if matches!(self.current_token(), Some(Token::LBracket)) {
+                        self.advance();
+                        let index = self.parse_expression()?;
+                        let end_span = self.expect(Token::RBracket)?;
+                        let span = expr.span.merge(end_span);
+                        expr = Expr {
+                            kind: ExprKind::OptionalArrayIndex {
+                                array: Box::new(expr),
+                                index: Box::new(index),
+                            },
+                            span,
+                        };
+                    } else {
+                        // Optional field access: ?.field
+                        let field_span = self.current_span();
+                        let field = match self.advance() {
+                            Some(SpannedToken { token: Token::Ident(field_name), .. }) => field_name,
+                            other => {
+                                return Err(ParseError::new(
+                                    "expected field name or '[' after '?.'",
+                                    other.map(|st| st.span).unwrap_or(field_span),
+                                ));
+                            }
+                        };
+                        let span = expr.span.merge(self.previous_span());
+                        expr = Expr {
+                            kind: ExprKind::OptionalFieldAccess {
+                                object: Box::new(expr),
+                                field,
+                            },
+                            span,
+                        };
+                    }
                 }
                 Some(Token::LBracket) => {
                     self.advance();

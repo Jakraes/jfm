@@ -86,6 +86,10 @@ pub enum ExprKind {
         array: Box<Expr>,
         index: Box<Expr>,
     },
+    OptionalArrayIndex {
+        array: Box<Expr>,
+        index: Box<Expr>,
+    },
     DeepFieldAccess {
         object: Box<Expr>,
         field: String,

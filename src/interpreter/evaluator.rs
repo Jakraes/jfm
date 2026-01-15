@@ -29,9 +29,13 @@ enum AccessPathSegment {
     NegativeIndex(i64),
 }
 
+/// Maximum recursion depth to prevent stack overflow
+const MAX_RECURSION_DEPTH: usize = 1000;
+
 pub struct Interpreter {
     env: Environment,
     pipe_step: Option<usize>,
+    recursion_depth: usize,
 }
 
 impl Default for Interpreter {
@@ -45,6 +49,7 @@ impl Interpreter {
         Self {
             env: Environment::new(),
             pipe_step: None,
+            recursion_depth: 0,
         }
     }
 
@@ -54,6 +59,7 @@ impl Interpreter {
         Self {
             env,
             pipe_step: None,
+            recursion_depth: 0,
         }
     }
 
@@ -102,7 +108,7 @@ impl Interpreter {
                         name
                     )));
                 }
-                self.env.set(name.to_string(), val);
+                self.env.set_const(name.to_string(), val);
                 Ok(ControlFlow::Next)
             }
             Stmt::Expr(expr) => {
@@ -123,9 +129,10 @@ impl Interpreter {
                             result = ControlFlow::Return(val);
                             break;
                         }
-                        ControlFlow::Break | ControlFlow::Continue => {
+                        cf @ ControlFlow::Break | cf @ ControlFlow::Continue => {
+                            // Propagate break/continue to caller (the loop)
                             self.env.pop_scope();
-                            return self.execute_statement(s);
+                            return Ok(cf);
                         }
                         ControlFlow::Value(_) | ControlFlow::Next => {}
                     }
@@ -250,6 +257,16 @@ impl Interpreter {
                 let arr = self.evaluate(array)?;
                 let idx = self.evaluate(index)?;
                 self.get_index(&arr, &idx, expr.span)
+            }
+
+            ExprKind::OptionalArrayIndex { array, index } => {
+                let arr = self.evaluate(array)?;
+                if matches!(arr, Value::Null) {
+                    Ok(Value::Null)
+                } else {
+                    let idx = self.evaluate(index)?;
+                    self.get_index(&arr, &idx, expr.span)
+                }
             }
 
             ExprKind::DeepFieldAccess { object, field } => {
@@ -391,7 +408,8 @@ impl Interpreter {
                             let spread_val = self.evaluate(e)?;
                             match spread_val {
                                 Value::Array(arr) => {
-                                    vals.extend(arr.borrow().iter().cloned());
+                                    // Deep clone each element to avoid shared references
+                                    vals.extend(arr.borrow().iter().map(builtins::deep_clone));
                                 }
                                 _ => return Err(InterpreterError::type_error_at(
                                     format!("spread requires an array, found `{}`", self.value_type_name(&spread_val)),
@@ -454,7 +472,8 @@ impl Interpreter {
                                 Value::Object(obj) => {
                                     if let Value::Object(map_rc) = &result {
                                         for (k, v) in obj.borrow().iter() {
-                                            map_rc.borrow_mut().insert(k.clone(), v.clone());
+                                            // Deep clone each value to avoid shared references
+                                            map_rc.borrow_mut().insert(k.clone(), builtins::deep_clone(v));
                                         }
                                     }
                                 }
@@ -525,9 +544,18 @@ impl Interpreter {
                     (Value::Number(start_num, _), Value::Number(end_num, _)) => {
                         let mut values = Vec::new();
                         let mut current = start_num;
-                        while current <= end_num {
-                            values.push(Value::Number(current, false));
-                            current += 1.0;
+                        // Support both ascending and descending ranges
+                        if start_num <= end_num {
+                            while current <= end_num {
+                                values.push(Value::Number(current, false));
+                                current += 1.0;
+                            }
+                        } else {
+                            // Descending range: 5..1 produces [5, 4, 3, 2, 1]
+                            while current >= end_num {
+                                values.push(Value::Number(current, false));
+                                current -= 1.0;
+                            }
                         }
                         Ok(Value::Array(Rc::new(RefCell::new(values))))
                     }
@@ -682,8 +710,20 @@ impl Interpreter {
     fn perform_assignment(&mut self, target: &Expr, value: Value) -> Result<Value, InterpreterError> {
         match &target.kind {
             ExprKind::Identifier(name) => {
-                if !self.env.update(name.as_ref(), value.clone()) {
-                    self.env.set(name.to_string(), value.clone());
+                match self.env.update(name.as_ref(), value.clone()) {
+                    Err(()) => {
+                        return Err(InterpreterError::invalid_operation_at(
+                            format!("cannot assign to const variable `{}`", name),
+                            target.span
+                        ));
+                    }
+                    Ok(false) => {
+                        // Variable not found, create new one
+                        self.env.set(name.to_string(), value.clone());
+                    }
+                    Ok(true) => {
+                        // Successfully updated
+                    }
                 }
                 Ok(value)
             }
@@ -796,8 +836,8 @@ impl Interpreter {
             }
         
         if let ExprKind::Pipe { left: binding_expr, right: body } = &right.kind
-            && let ExprKind::AsBinding { expr: inner, name } = &binding_expr.kind {
-                return self.eval_pipe_with_as_binding(left, inner, name, body);
+            && let ExprKind::AsBinding { expr: _, name } = &binding_expr.kind {
+                return self.eval_pipe_with_as_binding(left, name, body);
             }
         
         if let ExprKind::Lambda { params, body } = &right.kind {
@@ -970,7 +1010,7 @@ impl Interpreter {
         }
     }
     
-    fn eval_pipe_with_as_binding(&mut self, left: Value, _inner: &Expr, name: &Rc<str>, body: &Expr) -> Result<Value, InterpreterError> {
+    fn eval_pipe_with_as_binding(&mut self, left: Value, name: &Rc<str>, body: &Expr) -> Result<Value, InterpreterError> {
         match left {
             Value::Array(items_rc) => {
                 let items = items_rc.borrow();
@@ -1572,8 +1612,18 @@ impl Interpreter {
     }
 
     fn call_user_function(&mut self, func: &Function, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        // Check recursion depth to prevent stack overflow
+        if self.recursion_depth >= MAX_RECURSION_DEPTH {
+            return Err(InterpreterError::invalid_operation(format!(
+                "Maximum recursion depth ({}) exceeded",
+                MAX_RECURSION_DEPTH
+            )));
+        }
+        self.recursion_depth += 1;
+
         if args.len() > func.params.len() {
-             return Err(InterpreterError::invalid_operation(format!(
+            self.recursion_depth -= 1;
+            return Err(InterpreterError::invalid_operation(format!(
                 "Function expects at most {} arguments, got {}",
                 func.params.len(),
                 args.len()
@@ -1588,36 +1638,63 @@ impl Interpreter {
             if let Some(arg) = args_iter.next() {
                 self.env.set(param.name.to_string(), arg.clone());
             } else if let Some(default_expr) = &param.default {
-                let val = self.evaluate(default_expr)?;
+                let val = match self.evaluate(default_expr) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        self.env.pop_scope();
+                        self.recursion_depth -= 1;
+                        return Err(e);
+                    }
+                };
                 self.env.set(param.name.to_string(), val);
             } else {
-                 return Err(InterpreterError::invalid_operation(format!("Missing argument for parameter '{}'", param.name)));
+                self.env.pop_scope();
+                self.recursion_depth -= 1;
+                return Err(InterpreterError::invalid_operation(format!("Missing argument for parameter '{}'", param.name)));
             }
         }
 
         let result = if let Some(ref body_expr) = func.body_expr {
-            self.evaluate(body_expr)?
+            match self.evaluate(body_expr) {
+                Ok(v) => v,
+                Err(e) => {
+                    self.env.pop_scope();
+                    self.recursion_depth -= 1;
+                    return Err(e);
+                }
+            }
         } else if let Some(ref body_stmts) = func.body_stmts {
             let mut last_val = Value::Null;
             for stmt in body_stmts {
-                match self.execute_statement(stmt)? {
-                    ControlFlow::Return(val) => {
+                match self.execute_statement(stmt) {
+                    Ok(ControlFlow::Return(val)) => {
                         self.env.pop_scope();
+                        self.recursion_depth -= 1;
                         return Ok(val);
                     }
-                    ControlFlow::Value(val) => last_val = val,
-                    ControlFlow::Next => {}
-                    ControlFlow::Break | ControlFlow::Continue => {
+                    Ok(ControlFlow::Value(val)) => last_val = val,
+                    Ok(ControlFlow::Next) => {}
+                    Ok(ControlFlow::Break) | Ok(ControlFlow::Continue) => {
+                        self.env.pop_scope();
+                        self.recursion_depth -= 1;
                         return Err(InterpreterError::invalid_operation("break/continue outside loop"));
+                    }
+                    Err(e) => {
+                        self.env.pop_scope();
+                        self.recursion_depth -= 1;
+                        return Err(e);
                     }
                 }
             }
             last_val
         } else {
+            self.env.pop_scope();
+            self.recursion_depth -= 1;
             return Err(InterpreterError::invalid_operation("Function has no body"));
         };
 
         self.env.pop_scope();
+        self.recursion_depth -= 1;
         Ok(result)
     }
 
@@ -1708,6 +1785,14 @@ impl Interpreter {
                     Ok(Value::Null)
                 }
             }
+            Value::String(s) => {
+                if field == "length" {
+                    // Count Unicode characters, not bytes
+                    Ok(Value::Number(s.chars().count() as f64, false))
+                } else {
+                    Ok(Value::Null)
+                }
+            }
             Value::Null => {
                 if let Some(it) = self.env.get(PIPE_CONTEXT)
                     && let Value::Object(map) = it {
@@ -1741,77 +1826,55 @@ impl Interpreter {
         }
     }
 
+    /// Helper to resolve array index, handling negative indices (e.g., -1 = last element)
+    fn resolve_array_index(n: f64, len: usize, span: Span) -> Result<usize, InterpreterError> {
+        if n < 0.0 {
+            let neg_idx = (-n) as usize;
+            if neg_idx > len {
+                return Err(InterpreterError::type_error_at(
+                    format!("index out of bounds: the length is {} but the index is -{}", len, neg_idx),
+                    span
+                ));
+            }
+            Ok(len - neg_idx)
+        } else {
+            let idx = n as usize;
+            if idx >= len {
+                return Err(InterpreterError::index_out_of_bounds_at(idx, len, span));
+            }
+            Ok(idx)
+        }
+    }
+
+    /// Helper to get element at index from an array
+    fn get_array_element(items: &Rc<RefCell<Vec<Value>>>, n: f64, span: Span) -> Result<Value, InterpreterError> {
+        let borrowed = items.borrow();
+        let len = borrowed.len();
+        let index = Self::resolve_array_index(n, len, span)?;
+        borrowed
+            .get(index)
+            .cloned()
+            .ok_or_else(|| InterpreterError::index_out_of_bounds_at(index, len, span))
+    }
+
     fn get_index(&self, arr: &Value, idx: &Value, span: Span) -> Result<Value, InterpreterError> {
         match (arr, idx) {
             (Value::Array(items), Value::Number(n, _)) => {
-                let len = items.borrow().len();
-                let index = if *n < 0.0 {
-                    let neg_idx = (-*n) as usize;
-                    if neg_idx > len {
-                        return Err(InterpreterError::type_error_at(format!(
-                            "index out of bounds: the length is {} but the index is -{}", len, neg_idx
-                        ), span));
-                    }
-                    len - neg_idx
-                } else {
-                    *n as usize
-                };
-                if index >= len {
-                    return Err(InterpreterError::index_out_of_bounds_at(index, len, span));
-                }
-                items
-                    .borrow()
-                    .get(index)
-                    .cloned()
-                    .ok_or_else(|| InterpreterError::index_out_of_bounds_at(index, len, span))
+                Self::get_array_element(items, *n, span)
             }
             (Value::Null, Value::Number(n, _)) => {
-                if let Some(it) = self.env.get(PIPE_CONTEXT)
-                    && let Value::Array(items) = it {
-                        let len = items.borrow().len();
-                        let index = if *n < 0.0 {
-                            let neg_idx = (-*n) as usize;
-                            if neg_idx > len {
-                                return Err(InterpreterError::type_error_at(format!(
-                                    "index out of bounds: the length is {} but the index is -{}", len, neg_idx
-                                ), span));
-                            }
-                            len - neg_idx
-                        } else {
-                            *n as usize
-                        };
-                        if index >= len {
-                            return Err(InterpreterError::index_out_of_bounds_at(index, len, span));
-                        }
-                        return items
-                            .borrow()
-                            .get(index)
-                            .cloned()
-                            .ok_or_else(|| InterpreterError::index_out_of_bounds_at(index, len, span));
+                // Try pipe context first
+                if let Some(it) = self.env.get(PIPE_CONTEXT) {
+                    if let Value::Array(items) = it {
+                        return Self::get_array_element(&items, *n, span);
                     }
-                if let Some(root) = self.env.get(ROOT_CONTEXT)
-                    && let Value::Array(items) = root {
-                        let len = items.borrow().len();
-                        let index = if *n < 0.0 {
-                            let neg_idx = (-*n) as usize;
-                            if neg_idx > len {
-                                return Err(InterpreterError::type_error_at(format!(
-                                    "index out of bounds: the length is {} but the index is -{}", len, neg_idx
-                                ), span));
-                            }
-                            len - neg_idx
-                        } else {
-                            *n as usize
-                        };
-                        if index >= len {
-                            return Err(InterpreterError::index_out_of_bounds_at(index, len, span));
-                        }
-                        return items
-                            .borrow()
-                            .get(index)
-                            .cloned()
-                            .ok_or_else(|| InterpreterError::index_out_of_bounds_at(index, len, span));
+                }
+                // Fall back to root context
+                if let Some(root) = self.env.get(ROOT_CONTEXT) {
+                    if let Value::Array(items) = root {
+                        return Self::get_array_element(&items, *n, span);
                     }
+                }
                 Err(InterpreterError::type_error_at("cannot index null value", span))
             }
             _ => Err(InterpreterError::type_error_at(format!(
@@ -1839,7 +1902,13 @@ impl Interpreter {
                     Ok(Value::Number(left_num / right_num, true))
                 }
             }
-            (Value::Number(left_num, left_float), BinaryOp::Mod, Value::Number(right_num, right_float)) => Ok(Value::Number(left_num % right_num, *left_float || *right_float)),
+            (Value::Number(left_num, left_float), BinaryOp::Mod, Value::Number(right_num, right_float)) => {
+                if *right_num == 0.0 {
+                    Err(InterpreterError::division_by_zero_at(span))
+                } else {
+                    Ok(Value::Number(left_num % right_num, *left_float || *right_float))
+                }
+            }
             (Value::Number(base, _), BinaryOp::Pow, Value::Number(exponent, _)) => Ok(Value::Number(base.powf(*exponent), true)),
             (Value::String(left_str), BinaryOp::Add, Value::String(right_str)) => {
                 let mut combined = String::with_capacity(left_str.len() + right_str.len());

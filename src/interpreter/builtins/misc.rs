@@ -173,9 +173,21 @@ pub fn builtin_to_bool(args: &[Value]) -> Result<Value, InterpreterError> {
     }))
 }
 
+/// Maximum size for parse_json input (100MB)
+const MAX_JSON_SIZE: usize = 100 * 1024 * 1024;
+
 pub fn builtin_parse_json(args: &[Value]) -> Result<Value, InterpreterError> {
     require_args!(args, 1, "parse_json");
     with_string!(args, "parse_json", |s: &Rc<str>| {
+        // Check size limit to prevent memory exhaustion
+        if s.len() > MAX_JSON_SIZE {
+            return Err(InterpreterError::invalid_operation(format!(
+                "parse_json: input too large ({} bytes, max {} bytes)",
+                s.len(),
+                MAX_JSON_SIZE
+            )));
+        }
+        
         use crate::format;
         fn convert(v: &serde_json::Value) -> Value {
             match v {

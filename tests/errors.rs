@@ -51,10 +51,11 @@ fn test_error_field_access_on_number() {
 }
 
 #[test]
-fn test_error_field_access_on_string() {
+fn test_field_access_on_string_returns_null() {
+    // Accessing non-existent fields on strings returns null (except .length)
     let source = r#"let x = "hello"; x.field;"#;
-    let result = parse_and_run(source, Value::Null);
-    assert!(result.is_err());
+    let result = parse_and_run(source, Value::Null).unwrap().unwrap();
+    assert_eq!(result, Value::Null);
 }
 
 #[test]
@@ -138,10 +139,11 @@ fn test_error_division_by_zero_variable() {
 }
 
 #[test]
-fn test_modulo_by_zero() {
+fn test_error_modulo_by_zero() {
+    // Modulo by zero should produce an error (like division)
     let source = "let x = 10 % 0;";
     let result = parse_and_run(source, Value::Null);
-    assert!(result.is_ok());
+    assert!(result.is_err());
 }
 
 #[test]
@@ -289,16 +291,18 @@ fn test_null_inequality_with_false() {
 
 #[test]
 fn test_empty_array_equality() {
+    // Empty arrays are now equal (deep equals)
     let source = "[] == [];";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    assert_eq!(result, Value::Bool(false));
+    assert_eq!(result, Value::Bool(true));
 }
 
 #[test]
 fn test_empty_object_equality() {
+    // Empty objects are now equal (deep equals)
     let source = "let a = {}; let b = {}; a == b;";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    assert_eq!(result, Value::Bool(false));
+    assert_eq!(result, Value::Bool(true));
 }
 
 #[test]

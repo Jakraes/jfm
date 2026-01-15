@@ -87,10 +87,27 @@ pub fn lexer<'a>()
         just('t').to('\t'),
     )));
 
-    let string = just('"')
-        .ignore_then(none_of("\\\"").or(escape).repeated().collect::<String>())
+    let double_quote_string = just('"')
+        .ignore_then(none_of("\\\"").or(escape.clone()).repeated().collect::<String>())
         .then_ignore(just('"'))
         .map(Token::String);
+
+    // Single quote escape - allows \' inside single-quoted strings
+    let single_escape = just('\\').ignore_then(choice((
+        just('\\'),
+        just('/'),
+        just('\''),
+        just('n').to('\n'),
+        just('r').to('\r'),
+        just('t').to('\t'),
+    )));
+
+    let single_quote_string = just('\'')
+        .ignore_then(none_of("\\'").or(single_escape).repeated().collect::<String>())
+        .then_ignore(just('\''))
+        .map(Token::String);
+
+    let string = double_quote_string.or(single_quote_string);
 
     let template_escape = just('\\').ignore_then(choice((
         just('\\'),

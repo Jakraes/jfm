@@ -71,13 +71,13 @@ x => x * 2                  // Lambda functions
 Three ways to declare variables with different mutability rules:
 
 ```jfm
-x = 10                      // Simple assignment (can reassign)
-let y = 20                  // Explicit let declaration (can reassign)
-const z = 30                // Constant (immutable, cannot reassign)
+x = 10;                     // Simple assignment (can reassign)
+let y = 20;                 // Explicit let declaration (can reassign)
+const z = 30;               // Constant (immutable, cannot reassign)
 
-x = 30                      // ✅ Works
-y = 40                      // ✅ Works
-z = 50                      // ❌ Error: cannot reassign const
+x = 30;                     // ✅ Works
+y = 40;                     // ✅ Works
+z = 50;                     // ❌ Error: cannot reassign const
 ```
 
 **Note:** Variables declared with `let` or `const` are block-scoped, while simple assignments use function scope.
@@ -87,17 +87,17 @@ z = 50                      // ❌ Error: cannot reassign const
 Multiple ways to access nested data:
 
 ```jfm
-root.user.name              // Dot notation
-root.users[0].name          // Array indexing
-root?.optional?.field       // Optional chaining (returns null if missing)
-.users                      // Short form (implicit root)
-root["key"]                 // Bracket notation for dynamic keys
-[1, 2, 3].length            // Array length property
+root.user.name;             // Dot notation
+root.users[0].name;         // Array indexing
+root?.optional?.field;      // Optional chaining (returns null if missing)
+.users;                     // Short form (implicit root)
+root["key"];                // Bracket notation for dynamic keys
+[1, 2, 3].length;           // Array length property
 ```
 
 **Optional Chaining:** The `?.` operator safely navigates potentially missing properties:
 ```jfm
-user?.address?.city ?? "Unknown"  // Returns "Unknown" if any part is null/undefined
+user?.address?.city ?? "Unknown";  // Returns "Unknown" if any part is null/undefined
 ```
 
 ### Operators
@@ -105,8 +105,8 @@ user?.address?.city ?? "Unknown"  // Returns "Unknown" if any part is null/undef
 #### Arithmetic
 ```jfm
 + - * / % ^                 // Addition, subtraction, multiplication, division, modulo, power
-2 ^ 8                       // 256 (exponentiation)
-10 % 3                      // 1 (modulo)
+2 ^ 8;                      // 256 (exponentiation)
+10 % 3;                     // 1 (modulo)
 ```
 
 #### Comparison
@@ -119,8 +119,8 @@ user?.address?.city ?? "Unknown"  // Returns "Unknown" if any part is null/undef
 #### Logical
 ```jfm
 && || !                     // AND, OR, NOT
-.active && .verified
-!disabled
+.active && .verified;
+!disabled;
 ```
 
 #### Ternary Conditional
@@ -131,15 +131,15 @@ age >= 18 ? "adult" : "minor"
 
 #### Null Coalescing
 ```jfm
-left ?? right               // Returns right if left is null/undefined
-user.nickname ?? user.name ?? "Anonymous"
+left ?? right;              // Returns right if left is null/undefined
+user.nickname ?? user.name ?? "Anonymous";
 ```
 
 #### Range Operator
 ```jfm
-start..end                  // Generates inclusive array [start, start+1, ..., end]
-1..5                        // [1, 2, 3, 4, 5]
-0..10                       // [0, 1, 2, ..., 10]
+start..end;                 // Generates inclusive array [start, start+1, ..., end]
+1..5;                       // [1, 2, 3, 4, 5]
+0..10;                      // [0, 1, 2, ..., 10]
 ```
 
 #### String/Array Concatenation
@@ -150,10 +150,10 @@ start..end                  // Generates inclusive array [start, start+1, ..., e
 
 #### Compound Assignment
 ```jfm
-x += 5                      // x = x + 5
-x -= 2                      // x = x - 2
-x *= 3                      // x = x * 3
-x /= 2                      // x = x / 2
+x += 5;                     // x = x + 5
+x -= 2;                     // x = x - 2
+x *= 3;                     // x = x * 3
+x /= 2;                     // x = x / 2
 ```
 
 ### Pattern Matching
@@ -181,7 +181,7 @@ match statusCode {
     400..499 => "Client Error",
     500..599 => "Server Error",
     _ => "Unknown Status"
-}
+};
 ```
 
 ### Control Flow
@@ -197,7 +197,7 @@ if condition {
 
 Expressions can be used directly:
 ```jfm
-if age >= 18 { "adult" } else { "minor" }
+if age >= 18 { "adult" } else { "minor" };
 ```
 
 #### For Loops
@@ -262,8 +262,8 @@ fn greet(name, greeting = "Hello") {
     return `${greeting}, ${name}!`;
 }
 
-greet("Alice")              // "Hello, Alice!"
-greet("Bob", "Hi")          // "Hi, Bob!"
+greet("Alice");             // "Hello, Alice!"
+greet("Bob", "Hi");         // "Hi, Bob!"
 ```
 
 ### The Pipe Operator: jfm's Superpower
@@ -279,15 +279,15 @@ The `|` (pipe) operator is the heart of jfm. It intelligently handles filtering,
 
 #### Mapping (Field Access)
 ```jfm
-.users | .name                      // Extract names → ["Alice", "Bob", "Charlie"]
-.users | .profile.email             // Extract nested values
+.users | .name;                     // Extract names → ["Alice", "Bob", "Charlie"]
+.users | .profile.email;            // Extract nested values
 ```
 
 #### Transformation (Arithmetic Operations)
 ```jfm
-.users | .age * 2                   // Double everyone's age
-.users | .salary + 1000             // Give everyone a raise
-.users | .score / 10                // Normalize scores
+.users | .age * 2;                  // Double everyone's age
+.users | .salary + 1000;            // Give everyone a raise
+.users | .score / 10;               // Normalize scores
 ```
 
 #### Nested Field Mutations
@@ -299,12 +299,12 @@ The `|` (pipe) operator is the heart of jfm. It intelligently handles filtering,
 
 #### Lambda Expressions in Pipes
 ```jfm
-.users | x => x.name                // Map with named parameter
-.users | x => x.age > 25            // Filter with named parameter
+.users | x => x.name;               // Map with named parameter
+.users | x => x.age > 25;           // Filter with named parameter
 .users | x => {
     name: x.name,
     age: x.age * 2
-}                                   // Complex transformation
+};                                  // Complex transformation
 ```
 
 #### The @ Variable
@@ -320,12 +320,12 @@ Use `@` to explicitly reference the current item:
 Name the current item for clearer code:
 
 ```jfm
-.users | @ as user | user.name      // Name current item "user"
+.users | @ as user | user.name;     // Name current item "user"
 .cells | @ as cell | 3 * {          // Combine with replication
     ...template,
     cell_id: cell.id,
     index: @                        // @ now refers to replication index
-}
+};
 ```
 
 #### Pipe Chaining
@@ -339,8 +339,8 @@ Chain multiple operations:
 
 #### Array Indexing in Pipes
 ```jfm
-.users | .active | [0]              // Get first active user
-.items | .inStock | [0..2]          // Get first 3 in-stock items
+.users | .active | [0];             // Get first active user
+.items | .inStock | [0..2];         // Get first 3 in-stock items
 ```
 
 #### Function Calls in Pipes
@@ -356,9 +356,9 @@ Functions work seamlessly:
 Call functions as methods on values:
 
 ```jfm
-.numbers.sum()                      // Same as sum(.numbers)
-.users.sort_by("age")               // Same as sort_by(.users, "age")
-"hello".upper()                     // Same as upper("hello")
+.numbers.sum();                     // Same as sum(.numbers)
+.users.sort_by("age");              // Same as sort_by(.users, "age")
+"hello".upper();                    // Same as upper("hello")
 ```
 
 #### Pipe Update Operator
@@ -375,9 +375,9 @@ Template literals enable string interpolation with embedded expressions:
 
 ```jfm
 let name = "Alice";
-let greeting = `Hello, ${name}!`;                    // "Hello, Alice!"
-let summary = `Found ${items.length} items`;         // Embedded expressions
-let total = `$${sum(items | .price)}`;               // Complex expressions
+let greeting = `Hello, ${name}!`;                   // "Hello, Alice!"
+let summary = `Found ${items.length} items`;        // Embedded expressions
+let total = `$${sum(items | .price)}`;              // Complex expressions
 ```
 
 **Multi-line strings:**
@@ -414,7 +414,7 @@ let html = `
 ```jfm
 let name = "Alice";
 let age = 30;
-{name, age}                          // Same as {name: name, age: age}
+{name, age};                         // Same as {name: name, age: age}
 ```
 
 #### Spread Operator
@@ -434,14 +434,14 @@ Set nested properties directly in object literals:
 
 ```jfm
 let cell = {name: "cell1", config: {x: 1}};
-{...cell, config.y: 2}               // {name: "cell1", config: {x: 1, y: 2}}
+{...cell, config.y: 2};              // {name: "cell1", config: {x: 1, y: 2}}
 ```
 
 #### Array Literals
 ```jfm
-[1, 2, 3]
-[1, ...otherArray, 4]
-[]
+[1, 2, 3];
+[1, ...otherArray, 4];
+[];
 ```
 
 ### Replication Operator
@@ -472,7 +472,7 @@ fn process(data) {
 
 // main.jfm
 let result = include("utils.jfm");
-process(root.users)
+process(root.users);
 ```
 
 #### Import (Module Object)
@@ -629,13 +629,13 @@ let result = math::add(math::square(3), math::square(4));  // 25
 
 ```jfm
 // Get names of active users over 25
-.users | .active == true && .age > 25 | .name
+.users | .active == true && .age > 25 | .name;
 
 // Extract emails from verified accounts
-.users | .verified == true | .email
+.users | .verified == true | .email;
 
 // Get first 5 active items
-.items | .inStock == true | [0..4]
+.items | .inStock == true | [0..4];
 ```
 
 ### Data Transformation
@@ -668,13 +668,13 @@ let ages = .users | .age;
     min: min(ages),
     max: max(ages),
     sum: sum(ages)
-}
+};
 
 // Group by department
-group_by(.employees, "department")
+group_by(.employees, "department");
 
 // Top N by score
-slice(sort_by(.users, "score"), 0, 10)
+slice(sort_by(.users, "score"), 0, 10);
 ```
 
 ### Complex Queries
@@ -685,7 +685,7 @@ slice(sort_by(.users, "score"), 0, 10)
     @ as user |
     user.skills | 
     contains(@, "JavaScript") |
-    user.name
+    user.name;
 
 // Transform and filter in one pipeline
 .items |
@@ -696,7 +696,7 @@ slice(sort_by(.users, "score"), 0, 10)
         discountedPrice: item.price * 0.9,
         category: item.category
     } |
-    .category == "Electronics"         // Filter by category
+    .category == "Electronics";        // Filter by category
 ```
 
 ### Data Generation
@@ -725,13 +725,13 @@ let configs = cross(["dev", "prod"], ["us", "eu"]) |
 
 ```jfm
 // Extract deeply nested values
-.company.employees | .department.location.city
+.company.employees | .department.location.city;
 
 // Safe navigation with defaults
-.user?.profile?.settings?.theme ?? "default"
+.user?.profile?.settings?.theme ?? "default";
 
 // Update nested structures
-.users | .profile.settings.theme = "dark"
+.users | .profile.settings.theme = "dark";
 ```
 
 ### Custom Functions
@@ -755,7 +755,7 @@ fn calculate_discount(price, percentage) {
     name: x.name,
     discount: calculate_discount(x.price, 20),
     formatted: format_currency(calculate_discount(x.price, 20))
-}
+};
 ```
 
 ### Pattern Matching Examples
@@ -768,7 +768,7 @@ match statusCode {
     400..499 => "Client Error",
     500..599 => "Server Error",
     _ => "Unknown"
-}
+};
 
 // User role mapping
 match user.role {
@@ -776,7 +776,7 @@ match user.role {
     "user" => "Regular User",
     "guest" => "Guest Account",
     _ => "Unknown Role"
-}
+};
 ```
 
 ### Module Organization

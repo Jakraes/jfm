@@ -55,9 +55,12 @@ pub fn builtin_sum(args: &[Value]) -> Result<Value, InterpreterError> {
         return Ok(Value::Number(0.0, false));
     }
     with_array!(args, "sum", |arr: &Rc<RefCell<Vec<Value>>>| {
+        let borrowed = arr.borrow();
+        if borrowed.is_empty() {
+            return Ok(Value::Number(0.0, false));
+        }
         let mut has_float = false;
-        let total: f64 = arr
-            .borrow()
+        let total: f64 = borrowed
             .iter()
             .filter_map(|v| {
                 if let Value::Number(n, is_float) = v {
@@ -74,14 +77,12 @@ pub fn builtin_sum(args: &[Value]) -> Result<Value, InterpreterError> {
 
 pub fn builtin_avg(args: &[Value]) -> Result<Value, InterpreterError> {
     if args.is_empty() {
-        return Ok(Value::Number(0.0, true));
+        return Ok(Value::Null);
     }
     with_array!(args, "avg", |arr: &Rc<RefCell<Vec<Value>>>| {
         let borrowed = arr.borrow();
-        if borrowed.is_empty() {
-            return Ok(Value::Number(0.0, true));
-        }
-        let total: f64 = borrowed
+        // Collect only numeric values
+        let numbers: Vec<f64> = borrowed
             .iter()
             .filter_map(|v| {
                 if let Value::Number(n, _) = v {
@@ -90,52 +91,67 @@ pub fn builtin_avg(args: &[Value]) -> Result<Value, InterpreterError> {
                     None
                 }
             })
-            .sum();
-        Ok(Value::Number(total / borrowed.len() as f64, true))
+            .collect();
+        
+        if numbers.is_empty() {
+            // No numeric values to average
+            return Ok(Value::Null);
+        }
+        
+        let total: f64 = numbers.iter().sum();
+        Ok(Value::Number(total / numbers.len() as f64, true))
     })
 }
 
 pub fn builtin_min(args: &[Value]) -> Result<Value, InterpreterError> {
     if args.is_empty() {
-        return Ok(Value::Number(0.0, false));
+        return Ok(Value::Null);
     }
     with_array!(args, "min", |arr: &Rc<RefCell<Vec<Value>>>| {
+        let borrowed = arr.borrow();
         let mut has_float = false;
-        let min = arr
-            .borrow()
-            .iter()
-            .filter_map(|v| {
-                if let Value::Number(n, is_float) = v {
-                    has_float |= *is_float;
-                    Some(*n)
-                } else {
-                    None
-                }
-            })
-            .fold(f64::MAX, |acc, n| acc.min(n));
-        Ok(Value::Number(min, has_float || min.fract() != 0.0))
+        let mut min_val: Option<f64> = None;
+        
+        for v in borrowed.iter() {
+            if let Value::Number(n, is_float) = v {
+                has_float |= *is_float;
+                min_val = Some(match min_val {
+                    Some(current) => current.min(*n),
+                    None => *n,
+                });
+            }
+        }
+        
+        match min_val {
+            Some(min) => Ok(Value::Number(min, has_float || min.fract() != 0.0)),
+            None => Ok(Value::Null), // No numeric values found
+        }
     })
 }
 
 pub fn builtin_max(args: &[Value]) -> Result<Value, InterpreterError> {
     if args.is_empty() {
-        return Ok(Value::Number(0.0, false));
+        return Ok(Value::Null);
     }
     with_array!(args, "max", |arr: &Rc<RefCell<Vec<Value>>>| {
+        let borrowed = arr.borrow();
         let mut has_float = false;
-        let max = arr
-            .borrow()
-            .iter()
-            .filter_map(|v| {
-                if let Value::Number(n, is_float) = v {
-                    has_float |= *is_float;
-                    Some(*n)
-                } else {
-                    None
-                }
-            })
-            .fold(f64::MIN, |acc, n| acc.max(n));
-        Ok(Value::Number(max, has_float || max.fract() != 0.0))
+        let mut max_val: Option<f64> = None;
+        
+        for v in borrowed.iter() {
+            if let Value::Number(n, is_float) = v {
+                has_float |= *is_float;
+                max_val = Some(match max_val {
+                    Some(current) => current.max(*n),
+                    None => *n,
+                });
+            }
+        }
+        
+        match max_val {
+            Some(max) => Ok(Value::Number(max, has_float || max.fract() != 0.0)),
+            None => Ok(Value::Null), // No numeric values found
+        }
     })
 }
 
@@ -191,7 +207,9 @@ pub fn builtin_sort_by(
 ) -> Result<Value, InterpreterError> {
     require_args!(args, 2, "sort_by");
     if let (Value::Array(arr), Value::String(field)) = (&args[0], &args[1]) {
-        arr.borrow_mut().sort_by(|a, b| {
+        // Clone to avoid mutating the original array (consistent with sort)
+        let mut result: Vec<Value> = arr.borrow().iter().cloned().collect();
+        result.sort_by(|a, b| {
             let (val_a, val_b) = (
                 get_field(a, field).unwrap_or(Value::Null),
                 get_field(b, field).unwrap_or(Value::Null),
@@ -204,7 +222,7 @@ pub fn builtin_sort_by(
                 _ => std::cmp::Ordering::Equal,
             }
         });
-        Ok(args[0].clone())
+        Ok(Value::Array(Rc::new(RefCell::new(result))))
     } else {
         Err(InterpreterError::type_error(
             "sort_by requires array and field name string",

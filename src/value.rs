@@ -73,11 +73,16 @@ impl Value {
         }
     }
 
+    /// Returns whether the value is truthy (JavaScript-like semantics).
+    /// Falsy values: null, false, 0, NaN, empty string
+    /// Truthy values: everything else
     pub fn is_truthy(&self) -> bool {
         match self {
-            Value::Bool(b) => *b,
             Value::Null => false,
-            _ => true,
+            Value::Bool(b) => *b,
+            Value::Number(n, _) => *n != 0.0 && !n.is_nan(),
+            Value::String(s) => !s.is_empty(),
+            Value::Array(_) | Value::Object(_) | Value::Function(_) | Value::Module(_) => true,
         }
     }
 }
@@ -120,6 +125,12 @@ pub fn values_equal(a: &Value, b: &Value) -> bool {
         (Value::Bool(a), Value::Bool(b)) => a == b,
         (Value::Number(a, _), Value::Number(b, _)) => a == b,
         (Value::String(a), Value::String(b)) => a == b,
+        // For arrays and objects, delegate to deep_equals
+        (Value::Array(_), Value::Array(_)) => deep_equals(a, b),
+        (Value::Object(_), Value::Object(_)) => deep_equals(a, b),
+        // Functions compare by identity
+        (Value::Function(f1), Value::Function(f2)) => std::rc::Rc::ptr_eq(f1, f2),
+        (Value::Module(m1), Value::Module(m2)) => std::rc::Rc::ptr_eq(m1, m2),
         _ => false,
     }
 }
@@ -128,7 +139,8 @@ pub fn deep_equals(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Null, Value::Null) => true,
         (Value::Bool(a), Value::Bool(b)) => a == b,
-        (Value::Number(a, _), Value::Number(b, _)) => a.to_bits() == b.to_bits(),
+        // Use standard float comparison for consistency (NaN != NaN, +0.0 == -0.0)
+        (Value::Number(a, _), Value::Number(b, _)) => a == b,
         (Value::String(a), Value::String(b)) => a == b,
         (Value::Array(arr_a), Value::Array(arr_b)) => {
             let arr_a_ref = arr_a.borrow();
