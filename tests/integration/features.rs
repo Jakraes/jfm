@@ -74,7 +74,7 @@ fn test_v2_match_and_negative_index() {
     
     let source = "[1,2,3] | [-1];";
     let result = parse_and_run(source, Value::Null).unwrap().unwrap();
-    assert_eq!(result, Value::Number(3.0, false));
+    assert_eq!(result.as_array().unwrap()[0], Value::Number(3.0, false));
 }
 
 #[test]

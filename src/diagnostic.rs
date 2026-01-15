@@ -67,6 +67,14 @@ impl Label {
             style: LabelStyle::Primary,
         }
     }
+
+    pub fn secondary(span: Span, message: impl Into<String>) -> Self {
+        Self {
+            span,
+            message: message.into(),
+            style: LabelStyle::Secondary,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -189,6 +197,9 @@ impl<'a> DiagnosticRenderer<'a> {
 
         let mut lines_to_show: Vec<usize> = Vec::new();
         for label in &diagnostic.labels {
+            if label.span.is_dummy() {
+                continue;
+            }
             let (start_line, _) = line_col(self.source, label.span.start);
             let (end_line, _) = line_col(self.source, label.span.end.saturating_sub(1).max(label.span.start));
             for line in start_line..=end_line {
@@ -200,7 +211,7 @@ impl<'a> DiagnosticRenderer<'a> {
         lines_to_show.sort();
 
         if !lines_to_show.is_empty() {
-            let first_label = diagnostic.labels.first();
+            let first_label = diagnostic.labels.iter().find(|l| !l.span.is_dummy());
             if let Some(label) = first_label {
                 let (line, col) = line_col(self.source, label.span.start);
                 output.push_str(&format!("  {} {}:{}:{}\n", 
@@ -217,10 +228,21 @@ impl<'a> DiagnosticRenderer<'a> {
             }
 
             output.push_str(&format!("{} {}\n", " ".repeat(line_num_width + 1), self.style_blue("|")));
+        } else if diagnostic.severity == Severity::Error {
+            // Show at least one line marker if we have an error but no spans
+            output.push_str(&format!("  {} {}:1:1\n", 
+                self.style_blue("-->"), self.file_name));
+            output.push_str(&format!("{} {}\n", " ", self.style_blue("|")));
+            output.push_str(&format!("{} {}\n", " ", self.style_blue("|")));
         }
 
         for note in &diagnostic.notes {
-            output.push_str(&format!("  {} {}\n", self.style_blue("="), note));
+            let prefix = if note.starts_with("help:") {
+                self.style_cyan("=")
+            } else {
+                self.style_blue("=")
+            };
+            output.push_str(&format!("  {} {}\n", prefix, note));
         }
 
         output
@@ -258,13 +280,23 @@ impl<'a> DiagnosticRenderer<'a> {
 
         let mut underlines: Vec<(usize, usize, &str, LabelStyle)> = Vec::new();
         for label in &diagnostic.labels {
+            if label.span.is_dummy() {
+                continue;
+            }
             let (label_start_line, start_col) = line_col(self.source, label.span.start);
             let (label_end_line, end_col) = line_col(self.source, label.span.end.saturating_sub(1).max(label.span.start));
 
             if label_start_line <= line_num && label_end_line >= line_num {
                 let col_start = if label_start_line == line_num { start_col } else { 1 };
-                let col_end = if label_end_line == line_num { end_col + 1 } else { line_info.content.len() + 1 };
-                underlines.push((col_start, col_end, &label.message, label.style));
+                let col_end = if label_end_line == line_num { 
+                    // Ensure we don't go beyond the line
+                    end_col.min(line_info.content.len() + 1)
+                } else { 
+                    line_info.content.len() + 1 
+                };
+                if !label.message.is_empty() || !label.span.is_dummy() {
+                    underlines.push((col_start, col_end, &label.message, label.style));
+                }
             }
         }
 
@@ -316,6 +348,13 @@ impl<'a> DiagnosticRenderer<'a> {
                     ));
                 }
             }
+        } else if diagnostic.severity == Severity::Error {
+            // Show at least a caret if we have an error but no specific span for this line
+            output.push_str(&format!("{} {} {}\n",
+                " ".repeat(width + 1),
+                self.style_blue("|"),
+                self.style_red("^")
+            ));
         }
     }
 

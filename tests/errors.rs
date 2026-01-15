@@ -241,7 +241,8 @@ fn test_error_for_over_non_array() {
     let source = "for x in 42 { x; }";
     let result = parse_and_run(source, Value::Null);
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("non-array"));
+    let err = result.unwrap_err();
+    assert!(err.contains("cannot iterate") && err.contains("number"));
 }
 
 #[test]

@@ -1,4 +1,5 @@
 use crate::ast::{ArrayElement, BinaryOp, Expr, ExprKind, ObjectEntry, Stmt, UnaryOp, Param};
+use crate::diagnostic::Span;
 use crate::value::{deep_equals, values_equal, value_to_string, Function, Value};
 use super::builtins;
 use super::environment::Environment;
@@ -147,7 +148,10 @@ impl Interpreter {
                 let iter_val = self.evaluate(iterable)?;
                 let items_rc = match iter_val {
                     Value::Array(arr) => arr,
-                    _ => return Err(InterpreterError::type_error("Cannot iterate over non-array")),
+                    _ => return Err(InterpreterError::type_error_at(
+                        format!("cannot iterate over value of type `{}`", self.value_type_name(&iter_val)),
+                        iterable.span
+                    )),
                 };
                 
                 let items = items_rc.borrow();
@@ -218,14 +222,8 @@ impl Interpreter {
             ExprKind::Identifier(name) => {
                 if let Some(val) = self.env.get(name.as_ref()) {
                     Ok(val)
-                } else if name.as_ref() == "@" {
-                    if let Some(pipe_val) = self.env.get(PIPE_CONTEXT) {
-                        Ok(pipe_val)
-                    } else {
-                        Err(InterpreterError::undefined_variable_at("@".to_string(), expr.span))
-                    }
                 } else if let Some(pipe_val) = self.env.get(PIPE_CONTEXT) {
-                    match self.get_field(&pipe_val, name.as_ref()) {
+                    match self.get_field(&pipe_val, name.as_ref(), expr.span) {
                         Ok(field_val) if !matches!(field_val, Value::Null) => Ok(field_val),
                         _ => Err(InterpreterError::undefined_variable_at(name.to_string(), expr.span)),
                     }
@@ -236,7 +234,7 @@ impl Interpreter {
 
             ExprKind::FieldAccess { object, field } => {
                 let obj = self.evaluate(object)?;
-                self.get_field(&obj, field)
+                self.get_field(&obj, field, expr.span)
             }
 
             ExprKind::OptionalFieldAccess { object, field } => {
@@ -244,14 +242,14 @@ impl Interpreter {
                 if matches!(obj, Value::Null) {
                     Ok(Value::Null)
                 } else {
-                    self.get_field(&obj, field)
+                    self.get_field(&obj, field, expr.span)
                 }
             }
 
             ExprKind::ArrayIndex { array, index } => {
                 let arr = self.evaluate(array)?;
                 let idx = self.evaluate(index)?;
-                self.get_index(&arr, &idx)
+                self.get_index(&arr, &idx, expr.span)
             }
 
             ExprKind::DeepFieldAccess { object, field } => {
@@ -269,9 +267,8 @@ impl Interpreter {
                     let left_val = self.evaluate(left)?;
                     if let Value::Number(n, _) = &left_val {
                         let is_replication_template = self.is_replication_template(right);
-                        let is_single_at = matches!(&right.kind, ExprKind::Identifier(name) if name.as_ref() == "@");
                         
-                        if is_replication_template && !is_single_at {
+                        if is_replication_template {
                             let count = *n as usize;
                             let mut results = Vec::with_capacity(count);
                             for i in 0..count {
@@ -287,12 +284,12 @@ impl Interpreter {
                 }
                 let left_val = self.evaluate(left)?;
                 let right_val = self.evaluate(right)?;
-                self.eval_binary_op(&left_val, op, &right_val)
+                self.eval_binary_op(&left_val, op, &right_val, expr.span)
             }
 
             ExprKind::Unary { op, expr } => {
                 let val = self.evaluate(expr)?;
-                self.eval_unary_op(op, &val)
+                self.eval_unary_op(op, &val, expr.span)
             }
 
             ExprKind::Pipe { left, right } => {
@@ -347,9 +344,9 @@ impl Interpreter {
                 let left_val = self.evaluate(left)?;
                 
                 let path_segments = extract_path_segments(path)
-                    .ok_or_else(|| InterpreterError::type_error("PipeUpdate path must be a field access or array index"))?;
+                    .ok_or_else(|| InterpreterError::type_error_at("PipeUpdate path must be a field access or array index", expr.span))?;
                 
-                let current_path_val = self.get_nested_path(&left_val, &path_segments)?;
+                let current_path_val = self.get_nested_path(&left_val, &path_segments, path.span)?;
                 
                 self.env.push_scope();
                 self.env.set(PIPE_CONTEXT.to_string(), current_path_val.clone());
@@ -387,7 +384,10 @@ impl Interpreter {
                                 Value::Array(arr) => {
                                     vals.extend(arr.borrow().iter().cloned());
                                 }
-                                _ => return Err(InterpreterError::type_error("Spread requires an array")),
+                                _ => return Err(InterpreterError::type_error_at(
+                                    format!("spread requires an array, found `{}`", self.value_type_name(&spread_val)),
+                                    e.span
+                                )),
                             }
                         }
                     }
@@ -419,8 +419,10 @@ impl Interpreter {
                             result = self.set_path_on_value(result, path, val)?;
                         }
                         ObjectEntry::Shorthand { name } => {
+                            // Use a dummy span for shorthand entries since we don't have expr span here
+                            let dummy_span = crate::diagnostic::Span::dummy();
                             let val = if let Some(pipe_val) = self.env.get(PIPE_CONTEXT) {
-                                match self.get_field(&pipe_val, &name) {
+                                match self.get_field(&pipe_val, &name, dummy_span) {
                                     Ok(field_val) if !matches!(field_val, Value::Null) => field_val,
                                     _ => {
                                         self.env.get(name.as_str())
@@ -437,7 +439,7 @@ impl Interpreter {
                                 map_rc.borrow_mut().insert(name.clone(), val);
                             }
                         }
-                        ObjectEntry::Spread(e) => {
+                                ObjectEntry::Spread(e) => {
                             let spread_val = self.evaluate(e)?;
                             match spread_val {
                                 Value::Object(obj) => {
@@ -447,12 +449,16 @@ impl Interpreter {
                                         }
                                     }
                                 }
-                                _ => return Err(InterpreterError::type_error("Spread in object requires an object")),
+                                _ => return Err(InterpreterError::type_error_at(
+                                    format!("spread in object requires an object, found `{}`", self.value_type_name(&spread_val)),
+                                    e.span
+                                )),
                             }
                         }
                         ObjectEntry::Projection { field } => {
+                             let dummy_span = crate::diagnostic::Span::dummy();
                              if let Some(pipe_val) = self.env.get(PIPE_CONTEXT) {
-                                 let val = match self.get_field(&pipe_val, field) {
+                                 let val = match self.get_field(&pipe_val, field, dummy_span) {
                                      Ok(v) => v,
                                      Err(_) => Value::Null,
                                  };
@@ -468,8 +474,11 @@ impl Interpreter {
                 Ok(result)
             }
 
-            ExprKind::Spread(_) => {
-                Err(InterpreterError::invalid_operation("Spread operator can only be used inside arrays or objects"))
+            ExprKind::Spread(e) => {
+                Err(InterpreterError::invalid_operation_at(
+                    "spread operator can only be used inside arrays or objects",
+                    e.span
+                ))
             }
 
             ExprKind::Lambda { params, body } => {
@@ -641,7 +650,10 @@ impl Interpreter {
                 let count_val = self.evaluate(count)?;
                 let n = match count_val {
                     Value::Number(n, _) => n as usize,
-                    _ => return Err(InterpreterError::type_error("Replicate count must be a number")),
+                    _ => return Err(InterpreterError::type_error_at(
+                        format!("replicate count must be a number, found `{}`", self.value_type_name(&count_val)),
+                        count.span
+                    )),
                 };
                 
                 let mut results = Vec::with_capacity(n);
@@ -676,7 +688,7 @@ impl Interpreter {
                         self.set_nested_path(&root_val, &path, value.clone())?;
                         return Ok(value);
                     }
-                    return Err(InterpreterError::type_error("Cannot set field - no context object"));
+                    return Err(InterpreterError::type_error_at("cannot set field - no context object", target.span));
                 }
                 
                 let obj_val = self.evaluate(object)?;
@@ -685,7 +697,10 @@ impl Interpreter {
                         map_rc.borrow_mut().insert(field.clone(), value.clone());
                         Ok(value)
                     }
-                    _ => Err(InterpreterError::type_error("Cannot set field on non-object")),
+                    _ => Err(InterpreterError::type_error_at(
+                        format!("cannot set field on value of type `{}`", self.value_type_name(&obj_val)),
+                        target.span
+                    )),
                 }
             }
             ExprKind::ArrayIndex { array, index } => {
@@ -699,13 +714,16 @@ impl Interpreter {
                         self.set_nested_path(&root_val, &path, value.clone())?;
                         return Ok(value);
                     }
-                    return Err(InterpreterError::type_error("Cannot set index - no context object"));
+                    return Err(InterpreterError::type_error_at("cannot set index - no context object", target.span));
                 }
 
                 let idx_val = self.evaluate(index)?;
                 let idx = match idx_val {
                     Value::Number(n, _) => n as usize,
-                    _ => return Err(InterpreterError::type_error("Index must be a number")),
+                    _ => return Err(InterpreterError::type_error_at(
+                        format!("index must be a number, found `{}`", self.value_type_name(&idx_val)),
+                        index.span
+                    )),
                 };
 
                 let arr_val = self.evaluate(array)?;
@@ -719,10 +737,13 @@ impl Interpreter {
                             Err(InterpreterError::index_out_of_bounds_at(idx, items.len(), target.span))
                         }
                     }
-                    _ => Err(InterpreterError::type_error("Cannot index non-array")),
+                    _ => Err(InterpreterError::type_error_at(
+                        format!("cannot index value of type `{}`", self.value_type_name(&arr_val)),
+                        target.span
+                    )),
                 }
             }
-            _ => Err(InterpreterError::invalid_operation("Invalid assignment target")),
+            _ => Err(InterpreterError::invalid_operation_at("invalid assignment target", target.span)),
         }
     }
     
@@ -730,7 +751,10 @@ impl Interpreter {
         if let ExprKind::ArrayIndex { array, index } = &right.kind
             && matches!(array.kind, ExprKind::Literal(Value::Null)) {
                 let idx = self.evaluate(index)?;
-                let val = self.get_index(&left, &idx)?;
+                let val = self.get_index(&left, &idx, right.span)?;
+                if matches!(left, Value::Array(_)) {
+                    return Ok(Value::Array(Rc::new(RefCell::new(vec![val]))));
+                }
                 return Ok(val);
             }
         
@@ -800,9 +824,9 @@ impl Interpreter {
                     self.env.set(PIPE_CONTEXT.to_string(), item.clone());
 
                     if let Some((path, op, value_expr)) = &mutation_info {
-                        let current = self.get_nested_path(item, path)?;
+                        let current = self.get_nested_path(item, path, right.span)?;
                         let right_val = self.evaluate(value_expr)?;
-                        let new_val = self.eval_binary_op(&current, op, &right_val)?;
+                        let new_val = self.eval_binary_op(&current, op, &right_val, right.span)?;
                         
                         if let Some(it_val) = self.env.get(PIPE_CONTEXT) {
                             self.set_nested_path(&it_val, path, new_val)?;
@@ -845,9 +869,9 @@ impl Interpreter {
                 self.env.set(PIPE_CONTEXT.to_string(), other.clone());
                 
                 let result = if let Some((path, op, value_expr)) = &mutation_info {
-                    let current = self.get_nested_path(&other, path)?;
+                    let current = self.get_nested_path(&other, path, right.span)?;
                     let right_val = self.evaluate(value_expr)?;
-                    let new_val = self.eval_binary_op(&current, op, &right_val)?;
+                    let new_val = self.eval_binary_op(&current, op, &right_val, right.span)?;
                     
                     if let Some(it_val) = self.env.get(PIPE_CONTEXT) {
                         self.set_nested_path(&it_val, path, new_val)?;
@@ -1109,7 +1133,7 @@ fn get_pipe_assignment_path(expr: &Expr) -> Option<Vec<AccessPathSegment>> {
 }
 
 impl Interpreter {
-    fn get_nested_path(&self, obj: &Value, path: &[AccessPathSegment]) -> Result<Value, InterpreterError> {
+    fn get_nested_path(&self, obj: &Value, path: &[AccessPathSegment], span: Span) -> Result<Value, InterpreterError> {
         if path.is_empty() {
             return Ok(obj.clone());
         }
@@ -1118,13 +1142,13 @@ impl Interpreter {
         for segment in path {
             current = match segment {
                 AccessPathSegment::Field(field) => {
-                    self.get_field(&current, field)?
+                    self.get_field(&current, field, span)?
                 }
                 AccessPathSegment::Index(idx) => {
-                    self.get_index(&current, &Value::Number(*idx as f64, false))?
+                    self.get_index(&current, &Value::Number(*idx as f64, false), span)?
                 }
                 AccessPathSegment::NegativeIndex(idx) => {
-                    self.get_index(&current, &Value::Number(*idx as f64, false))?
+                    self.get_index(&current, &Value::Number(*idx as f64, false), span)?
                 }
             };
         }
@@ -1156,7 +1180,8 @@ impl Interpreter {
         }
         
         let parent_path = &path[..path.len() - 1];
-        let parent = self.get_nested_path(obj, parent_path)?;
+        // Use a dummy span for parent path lookup - the error will be reported at the final segment
+        let parent = self.get_nested_path(obj, parent_path, crate::diagnostic::Span::dummy())?;
         
         match &path[path.len() - 1] {
             AccessPathSegment::Field(field) => {
@@ -1292,8 +1317,12 @@ impl Interpreter {
             "input" => builtins::builtin_input(&args),
             "print" => builtins::builtin_print(&args, |v| value_to_string(v)),
             "unique" => builtins::builtin_unique(&args, |a, b| deep_equals(a, b)),
-            "sort_by" => builtins::builtin_sort_by(&args, |v, f| self.get_field(v, f)),
-            "group_by" => builtins::builtin_group_by(&args, |v, f| self.get_field(v, f)),
+            "sort_by" => builtins::builtin_sort_by(&args, |v, f| {
+                self.get_field(v, f, crate::diagnostic::Span::dummy())
+            }),
+            "group_by" => builtins::builtin_group_by(&args, |v, f| {
+                self.get_field(v, f, crate::diagnostic::Span::dummy())
+            }),
             "include" => self.builtin_include(&args),
             "import" => self.builtin_import(&args),
             "reverse" => builtins::builtin_reverse(&args),
@@ -1477,7 +1506,7 @@ impl Interpreter {
         }
     }
 
-    pub fn get_field(&self, obj: &Value, field: &str) -> Result<Value, InterpreterError> {
+    pub fn get_field(&self, obj: &Value, field: &str, span: Span) -> Result<Value, InterpreterError> {
         match obj {
             Value::Object(map) => Ok(map
                 .borrow()
@@ -1495,7 +1524,7 @@ impl Interpreter {
                 if let Some(it) = self.env.get(PIPE_CONTEXT)
                     && let Value::Object(map) = it {
                         return map.borrow().get(field).cloned()
-                            .ok_or_else(|| InterpreterError::field_not_found(field));
+                            .ok_or_else(|| InterpreterError::field_not_found_at(field, span));
                     }
                 // Fall back to root (for top-level .field access)
                 if let Some(root) = self.env.get(ROOT_CONTEXT)
@@ -1504,31 +1533,49 @@ impl Interpreter {
                     }
                 Ok(Value::Null)
             }
-            _ => Err(InterpreterError::type_error(format!(
-                "Cannot access field '{}' on non-object",
-                field
-            ))),
+            _ => Err(InterpreterError::type_error_at(format!(
+                "cannot access field `{}` on value of type `{}`",
+                field, self.value_type_name(obj)
+            ), span)),
+        }
+    }
+    
+    fn value_type_name(&self, val: &Value) -> &'static str {
+        match val {
+            Value::Null => "null",
+            Value::Bool(_) => "bool",
+            Value::Number(_, _) => "number",
+            Value::String(_) => "string",
+            Value::Array(_) => "array",
+            Value::Object(_) => "object",
+            Value::Function(_) => "function",
+            Value::Module(_) => "module",
         }
     }
 
-    fn get_index(&self, arr: &Value, idx: &Value) -> Result<Value, InterpreterError> {
+    fn get_index(&self, arr: &Value, idx: &Value, span: Span) -> Result<Value, InterpreterError> {
         match (arr, idx) {
             (Value::Array(items), Value::Number(n, _)) => {
                 let len = items.borrow().len();
                 let index = if *n < 0.0 {
                     let neg_idx = (-*n) as usize;
                     if neg_idx > len {
-                        return Err(InterpreterError::type_error(format!("Index -{} out of bounds for array of length {}", neg_idx, len)));
+                        return Err(InterpreterError::type_error_at(format!(
+                            "index out of bounds: the length is {} but the index is -{}", len, neg_idx
+                        ), span));
                     }
                     len - neg_idx
                 } else {
                     *n as usize
                 };
+                if index >= len {
+                    return Err(InterpreterError::index_out_of_bounds_at(index, len, span));
+                }
                 items
                     .borrow()
                     .get(index)
                     .cloned()
-                    .ok_or_else(|| InterpreterError::index_out_of_bounds(index, len))
+                    .ok_or_else(|| InterpreterError::index_out_of_bounds_at(index, len, span))
             }
             (Value::Null, Value::Number(n, _)) => {
                 if let Some(it) = self.env.get(PIPE_CONTEXT)
@@ -1537,17 +1584,22 @@ impl Interpreter {
                         let index = if *n < 0.0 {
                             let neg_idx = (-*n) as usize;
                             if neg_idx > len {
-                                return Err(InterpreterError::type_error(format!("Index -{} out of bounds for array of length {}", neg_idx, len)));
+                                return Err(InterpreterError::type_error_at(format!(
+                                    "index out of bounds: the length is {} but the index is -{}", len, neg_idx
+                                ), span));
                             }
                             len - neg_idx
                         } else {
                             *n as usize
                         };
+                        if index >= len {
+                            return Err(InterpreterError::index_out_of_bounds_at(index, len, span));
+                        }
                         return items
                             .borrow()
                             .get(index)
                             .cloned()
-                            .ok_or_else(|| InterpreterError::index_out_of_bounds(index, len));
+                            .ok_or_else(|| InterpreterError::index_out_of_bounds_at(index, len, span));
                     }
                 if let Some(root) = self.env.get(ROOT_CONTEXT)
                     && let Value::Array(items) = root {
@@ -1555,23 +1607,29 @@ impl Interpreter {
                         let index = if *n < 0.0 {
                             let neg_idx = (-*n) as usize;
                             if neg_idx > len {
-                                return Err(InterpreterError::type_error(format!("Index -{} out of bounds for array of length {}", neg_idx, len)));
+                                return Err(InterpreterError::type_error_at(format!(
+                                    "index out of bounds: the length is {} but the index is -{}", len, neg_idx
+                                ), span));
                             }
                             len - neg_idx
                         } else {
                             *n as usize
                         };
+                        if index >= len {
+                            return Err(InterpreterError::index_out_of_bounds_at(index, len, span));
+                        }
                         return items
                             .borrow()
                             .get(index)
                             .cloned()
-                            .ok_or_else(|| InterpreterError::index_out_of_bounds(index, len));
+                            .ok_or_else(|| InterpreterError::index_out_of_bounds_at(index, len, span));
                     }
-                Err(InterpreterError::type_error("Cannot index null"))
+                Err(InterpreterError::type_error_at("cannot index null value", span))
             }
-            _ => Err(InterpreterError::type_error(
-                "Array indexing requires array and number",
-            )),
+            _ => Err(InterpreterError::type_error_at(format!(
+                "cannot index value of type `{}` with value of type `{}`",
+                self.value_type_name(arr), self.value_type_name(idx)
+            ), span)),
         }
     }
 
@@ -1580,6 +1638,7 @@ impl Interpreter {
         left: &Value,
         op: &BinaryOp,
         right: &Value,
+        span: Span,
     ) -> Result<Value, InterpreterError> {
         match (left, op, right) {
             (Value::Number(left_num, left_float), BinaryOp::Add, Value::Number(right_num, right_float)) => Ok(Value::Number(left_num + right_num, *left_float || *right_float)),
@@ -1587,7 +1646,7 @@ impl Interpreter {
             (Value::Number(left_num, left_float), BinaryOp::Mul, Value::Number(right_num, right_float)) => Ok(Value::Number(left_num * right_num, *left_float || *right_float)),
             (Value::Number(left_num, _), BinaryOp::Div, Value::Number(right_num, _)) => {
                 if *right_num == 0.0 {
-                    Err(InterpreterError::division_by_zero())
+                    Err(InterpreterError::division_by_zero_at(span))
                 } else {
                     Ok(Value::Number(left_num / right_num, true))
                 }
@@ -1618,21 +1677,21 @@ impl Interpreter {
             (Value::Number(left_num, _), BinaryOp::LessEq, Value::Number(right_num, _)) => Ok(Value::Bool(left_num <= right_num)),
             (Value::Bool(left_bool), BinaryOp::And, Value::Bool(right_bool)) => Ok(Value::Bool(*left_bool && *right_bool)),
             (Value::Bool(left_bool), BinaryOp::Or, Value::Bool(right_bool)) => Ok(Value::Bool(*left_bool || *right_bool)),
-            _ => Err(InterpreterError::invalid_operation(format!(
-                "Cannot apply {:?} to {:?} and {:?}",
-                op, left, right
-            ))),
+            _ => Err(InterpreterError::invalid_operation_at(format!(
+                "cannot apply `{:?}` to values of type `{}` and `{}`",
+                op, self.value_type_name(left), self.value_type_name(right)
+            ), span)),
         }
     }
 
-    fn eval_unary_op(&mut self, op: &UnaryOp, val: &Value) -> Result<Value, InterpreterError> {
+    fn eval_unary_op(&mut self, op: &UnaryOp, val: &Value, span: Span) -> Result<Value, InterpreterError> {
         match (op, val) {
             (UnaryOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
             (UnaryOp::Neg, Value::Number(n, is_float)) => Ok(Value::Number(-n, *is_float)),
-            _ => Err(InterpreterError::invalid_operation(format!(
-                "Cannot apply {:?} to {:?}",
-                op, val
-            ))),
+            _ => Err(InterpreterError::invalid_operation_at(format!(
+                "cannot apply `{:?}` to value of type `{}`",
+                op, self.value_type_name(val)
+            ), span)),
         }
     }
 

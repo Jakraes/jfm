@@ -84,41 +84,53 @@ impl InterpreterError {
     pub fn to_diagnostic(&self) -> Diagnostic {
         match self {
             Self::UndefinedVariable { name, span } => {
-                Diagnostic::error(format!("undefined variable `{}`", name))
+                Diagnostic::error(format!("cannot find value `{}` in this scope", name))
                     .with_code("E0201")
-                    .with_label(Label::primary(*span, "not found in this scope"))
+                    .with_label(Label::primary(*span, format!("not found in this scope")))
+                    .with_help(format!("the variable `{}` is not defined in the current scope", name))
             }
             Self::TypeError { message, span } => {
-                Diagnostic::error(format!("type error: {}", message))
+                Diagnostic::error(format!("{}", message))
                     .with_code("E0202")
-                    .with_label(Label::primary(*span, ""))
+                    .with_label(Label::primary(*span, format!("{}", message)))
             }
             Self::IndexOutOfBounds { index, length, span } => {
-                Diagnostic::error(format!("index out of bounds: index is {} but length is {}", index, length))
+                Diagnostic::error(format!("index out of bounds: the length is {} but the index is {}", length, index))
                     .with_code("E0203")
-                    .with_label(Label::primary(*span, format!("index {} is out of bounds", index)))
+                    .with_label(Label::primary(*span, format!("index {} out of range [0..{})", index, length)))
             }
             Self::FieldNotFound { field, span } => {
-                Diagnostic::error(format!("field `{}` not found", field))
+                Diagnostic::error(format!("no field named `{}` found", field))
                     .with_code("E0204")
-                    .with_label(Label::primary(*span, "unknown field"))
+                    .with_label(Label::primary(*span, format!("unknown field `{}`", field)))
             }
             Self::DivisionByZero { span } => {
                 Diagnostic::error("division by zero")
                     .with_code("E0205")
-                    .with_label(Label::primary(*span, "division by zero here"))
+                    .with_label(Label::primary(*span, "attempt to divide by zero"))
             }
             Self::InvalidOperation { message, span } => {
-                Diagnostic::error(format!("invalid operation: {}", message))
+                Diagnostic::error(format!("{}", message))
                     .with_code("E0206")
-                    .with_label(Label::primary(*span, ""))
+                    .with_label(Label::primary(*span, format!("{}", message)))
             }
             Self::PipeChainError { step, step_source, inner, span } => {
-                Diagnostic::error(format!("pipe chain failed at step {}", step))
+                let mut diag = Diagnostic::error(format!("pipe chain failed at step {}", step))
                     .with_code("E0207")
-                    .with_label(Label::primary(*span, format!("error occurred in step {}: {}", step, step_source)))
-                    .with_note(format!("{}", inner))
-                    .with_note(format!("failing expression: {}", step_source))
+                    .with_label(Label::primary(*span, format!("error occurred at step {}", step)));
+                
+                let inner_diag = inner.to_diagnostic();
+                if let Some(first_label) = inner_diag.labels.first() {
+                    if !first_label.span.is_dummy() {
+                        diag = diag.with_label(Label::secondary(first_label.span, "original error occurred here"));
+                    }
+                }
+                
+                diag = diag.with_note(format!("failing expression: {}", step_source));
+                if !inner_diag.message.is_empty() {
+                    diag = diag.with_note(format!("caused by: {}", inner_diag.message));
+                }
+                diag
             }
         }
     }
