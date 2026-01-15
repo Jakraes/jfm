@@ -1,0 +1,56 @@
+// Example: Processing API Responses
+// Use case: Extract and transform data from nested API responses
+//
+// Sample input JSON:
+// {
+//   "data": {
+//     "users": [
+//       {
+//         "id": 1,
+//         "attributes": {
+//           "name": "Alice",
+//           "contact": {
+//             "email": "alice@example.com",
+//             "phone": "+1234567890"
+//           },
+//           "preferences": {
+//             "theme": "dark",
+//             "notifications": true
+//           }
+//         }
+//       }
+//     ]
+//   },
+//   "meta": {
+//     "pagination": {
+//       "page": 1,
+//       "totalPages": 10
+//     }
+//   }
+// }
+
+// Extract user emails safely
+.data?.users | .attributes?.contact?.email
+
+// Flatten user structure
+.data?.users | {
+    id: .id,
+    name: .attributes?.name ?? "Unknown",
+    email: .attributes?.contact?.email ?? null,
+    phone: .attributes?.contact?.phone ?? null,
+    theme: .attributes?.preferences?.theme ?? "light",
+    notifications: .attributes?.preferences?.notifications ?? false
+}
+
+// Get pagination info with defaults
+{
+    currentPage: .meta?.pagination?.page ?? 1,
+    totalPages: .meta?.pagination?.totalPages ?? 1,
+    hasNext: (.meta?.pagination?.page ?? 1) < (.meta?.pagination?.totalPages ?? 1)
+}
+
+// Alternative: Extract all user names with safe navigation
+// .data?.users | .attributes?.name ?? "N/A"
+
+// Alternative: Filter users by theme preference
+// .data?.users | .attributes?.preferences?.theme == "dark"

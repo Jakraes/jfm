@@ -1,0 +1,36 @@
+// Example: Sales Analytics and Aggregations
+// Use case: Calculate statistics and group sales data
+//
+// Sample input JSON:
+// {
+//   "sales": [
+//     {"product": "Widget", "price": 29.99, "quantity": 10, "category": "Electronics"},
+//     {"product": "Gadget", "price": 49.99, "quantity": 5, "category": "Electronics"},
+//     {"product": "Tool", "price": 19.99, "quantity": 15, "category": "Hardware"}
+//   ]
+// }
+
+let sales = .sales;
+
+let revenue = sales | x => x.price * x.quantity;
+
+{
+    totalSales: sales.length,
+    totalRevenue: sum(revenue),
+    averageOrderValue: avg(revenue),
+    highestOrder: max(revenue),
+    lowestOrder: min(revenue),
+    byCategory: group_by(sales, "category")
+}
+
+// Alternative: Get top 5 products by revenue
+// sales |
+//     @ as sale |
+//     {
+//         product: sale.product,
+//         revenue: sale.price * sale.quantity,
+//         category: sale.category
+//     } |
+//     sort_by(@, "revenue") |
+//     reverse |
+//     [0..4]

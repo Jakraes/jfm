@@ -1,0 +1,70 @@
+// Example: Pattern Matching
+// Use case: Handle different cases using match expressions
+//
+// Sample input JSON:
+// {
+//   "statusCode": 200,
+//   "user": {
+//     "role": "admin",
+//     "subscription": "premium"
+//   }
+// }
+
+// HTTP Status Code Handling
+let statusMessage = match .statusCode {
+    200..299 => "Success",
+    300..399 => "Redirect",
+    400..499 => "Client Error",
+    500..599 => "Server Error",
+    _ => "Unknown Status"
+};
+
+// User Role Mapping
+let roleDisplay = match .user?.role {
+    "admin" => "Administrator",
+    "moderator" => "Moderator",
+    "user" => "Regular User",
+    "guest" => "Guest Account",
+    _ => "Unknown Role"
+};
+
+// Subscription Tier Benefits
+let subscriptionBenefits = match .user?.subscription {
+    "premium" => {
+        maxProjects: 100,
+        storage: "1TB",
+        support: "24/7"
+    },
+    "pro" => {
+        maxProjects: 50,
+        storage: "500GB",
+        support: "Business Hours"
+    },
+    "free" => {
+        maxProjects: 5,
+        storage: "10GB",
+        support: "Community"
+    },
+    _ => {
+        maxProjects: 0,
+        storage: "0GB",
+        support: "None"
+    }
+};
+
+// Priority Level Based on Score
+// let priority = match .score {
+//     90..100 => "High Priority",
+//     70..89 => "Medium Priority",
+//     50..69 => "Low Priority",
+//     _ => "No Priority"
+// };
+
+{
+    statusCode: .statusCode,
+    statusMessage: statusMessage,
+    role: .user?.role,
+    roleDisplay: roleDisplay,
+    subscription: .user?.subscription,
+    benefits: subscriptionBenefits
+}

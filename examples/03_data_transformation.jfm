@@ -1,0 +1,45 @@
+// Example: Data Transformation and Normalization
+// Use case: Transform user data, normalize formats, add computed fields
+//
+// Sample input JSON:
+// {
+//   "users": [
+//     {
+//       "firstName": "Alice",
+//       "lastName": "Smith",
+//       "age": 28,
+//       "email": "alice@example.com",
+//       "nickname": null,
+//       "profile": {
+//         "score": 850,
+//         "level": 3
+//       }
+//     }
+//   ]
+// }
+
+.users | {
+    id: @.id ?? null,
+    fullName: .firstName + " " + .lastName,
+    displayName: .nickname ?? .firstName,
+    isAdult: .age >= 18,
+    ageGroup: .age < 30 ? "Young" : .age < 50 ? "Middle" : "Senior",
+    email: .email,
+    profile: {
+        score: .profile.score,
+        level: .profile.level,
+        status: .profile.score > 800 ? "Expert" : .profile.score > 600 ? "Advanced" : "Beginner"
+    },
+    metadata: {
+        createdAt: .createdAt ?? null,
+        lastActive: .lastActive ?? null
+    }
+}
+
+// Alternative: Normalize prices from cents to dollars
+// .products | {
+//     ...@,
+//     price: .price / 100,
+//     priceFormatted: `$${(.price / 100).toFixed(2)}`,
+//     discountedPrice: .price / 100 * 0.9
+// }

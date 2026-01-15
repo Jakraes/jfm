@@ -1,0 +1,29 @@
+// Example: Filtering and Extracting User Data
+// Use case: Filter users by criteria and extract specific fields
+//
+// Sample input JSON:
+// {
+//   "users": [
+//     {"id": 1, "name": "Alice", "age": 28, "active": true, "email": "alice@example.com"},
+//     {"id": 2, "name": "Bob", "age": 32, "active": false, "email": "bob@example.com"},
+//     {"id": 3, "name": "Charlie", "age": 25, "active": true, "email": "charlie@example.com"}
+//   ]
+// }
+
+// Get names of all active users
+.users | .active == true | .name
+
+// Alternative: Get names of active users over 25
+// .users | .active == true && .age > 25 | .name
+
+// Extract emails from active users
+// .users | .active == true | .email
+
+// Get full user objects for adults (age >= 18)
+// .users | .age >= 18
+
+// Complex filter: active users with valid emails
+// .users | .active == true && .email != null
+
+// Get first active user's email
+// .users | .active == true | [0] | .email

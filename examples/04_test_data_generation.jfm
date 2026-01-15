@@ -1,0 +1,64 @@
+// Example: Test Data Generation
+// Use case: Generate test data using replication and generators
+//
+// This example doesn't require input JSON - it generates data
+
+// Generate 10 test users
+let users = replicate(10, i => ({
+    id: i + 1,
+    name: `User ${i + 1}`,
+    email: `user${i + 1}@example.com`,
+    age: 20 + (i * 2),
+    active: i % 2 == 0,
+    score: 500 + (i * 50),
+    createdAt: `2024-01-${String(i + 1).padStart(2, "0")}`
+}));
+
+// Generate configuration combinations
+let environments = ["dev", "staging", "prod"];
+let regions = ["us-east", "us-west", "eu-west"];
+
+let configs = cross(environments, regions) |
+    @ as pair |
+    {
+        environment: pair[0],
+        region: pair[1],
+        apiUrl: `https://${pair[0]}.api.${pair[1]}.example.com`,
+        database: `db-${pair[0]}-${pair[1]}`
+    };
+
+// Generate sequence of test IDs
+let testIds = range(1, 100, 5);
+
+// Generate nested test data
+let cells = replicate(5, i => {
+    let template = {
+        type: "cell",
+        config: {
+            x: 0,
+            y: 0,
+            active: true
+        }
+    };
+    return {
+        ...template,
+        id: i,
+        config: {
+            ...template.config,
+            id: i,
+            position: i * 10
+        }
+    };
+});
+
+{
+    users: users,
+    configs: configs,
+    testIds: testIds,
+    cells: cells,
+    summary: {
+        userCount: users.length,
+        configCount: configs.length,
+        totalTestIds: testIds.length
+    }
+}

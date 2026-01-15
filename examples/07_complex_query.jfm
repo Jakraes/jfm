@@ -1,0 +1,72 @@
+// Example: Complex Multi-Step Query
+// Use case: Combine filtering, transformation, aggregation, and sorting
+//
+// Sample input JSON:
+// {
+//   "orders": [
+//     {
+//       "id": 1,
+//       "customer": {"name": "Alice", "tier": "premium"},
+//       "items": [
+//         {"product": "Widget", "price": 29.99, "quantity": 2},
+//         {"product": "Gadget", "price": 49.99, "quantity": 1}
+//       ],
+//       "status": "completed",
+//       "date": "2024-01-15"
+//     },
+//     {
+//       "id": 2,
+//       "customer": {"name": "Bob", "tier": "regular"},
+//       "items": [
+//         {"product": "Tool", "price": 19.99, "quantity": 3}
+//       ],
+//       "status": "pending",
+//       "date": "2024-01-16"
+//     }
+//   ]
+// }
+
+// Step 1: Filter completed orders
+// Step 2: Calculate total for each order
+// Step 3: Filter orders over $50
+// Step 4: Sort by total descending
+// Step 5: Get top 3
+// Step 6: Format output
+
+let topOrders = .orders |
+    .status == "completed" |                           // Filter completed
+    @ as order |
+    {
+        id: order.id,
+        customer: order.customer.name,
+        tier: order.customer.tier,
+        date: order.date,
+        itemCount: order.items.length,
+        total: sum(order.items | x => x.price * x.quantity),
+        items: order.items | {
+            product: .product,
+            quantity: .quantity,
+            subtotal: .price * .quantity
+        }
+    } |
+    .total > 50 |                                      // Filter high-value
+    sort_by(@, "total") |                              // Sort by total
+    reverse |                                          // Descending
+    [0..2];                                            // Top 3
+
+// Calculate summary statistics
+let allTotals = .orders |
+    .status == "completed" |
+    @ as order |
+    sum(order.items | x => x.price * x.quantity);
+
+let summary = {
+    totalOrders: .orders.length,
+    completedOrders: (.orders | .status == "completed").length,
+    totalRevenue: sum(allTotals),
+    averageOrderValue: avg(allTotals),
+    highestOrder: max(allTotals),
+    topOrders: topOrders
+};
+
+summary

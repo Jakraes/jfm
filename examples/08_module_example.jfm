@@ -1,0 +1,64 @@
+// Example: Using Modules
+// Use case: Organize code into reusable modules
+//
+// This example demonstrates importing and using modules.
+// You would typically have separate files for the modules.
+
+// Example module file: math.jfm
+// fn add(a, b) {
+//     return a + b;
+// }
+//
+// fn multiply(a, b) {
+//     return a * b;
+// }
+//
+// fn square(x) {
+//     return x * x;
+// }
+
+// In main file (this example):
+// let math = import("math.jfm");
+//
+// let sum = math::add(5, 3);
+// let product = math::multiply(4, 7);
+// let squared = math::square(6);
+//
+// {
+//     sum: sum,
+//     product: product,
+//     squared: squared,
+//     combined: math::add(math::square(3), math::square(4))
+// }
+
+// For demonstration without actual module file:
+// This shows how you would use modules in a real scenario
+fn add(a, b) {
+    return a + b;
+}
+
+fn multiply(a, b) {
+    return a * b;
+}
+
+fn square(x) {
+    return x * x;
+}
+
+let mathModule = {
+    add: add,
+    multiply: multiply,
+    square: square
+};
+
+// Simulate module usage pattern
+{
+    demo: "Module system allows you to organize code",
+    usage: "let math = import('math.jfm'); math::add(1, 2);",
+    benefits: [
+        "Code organization",
+        "Reusability",
+        "Namespace isolation",
+        "Cleaner codebase"
+    ]
+}
