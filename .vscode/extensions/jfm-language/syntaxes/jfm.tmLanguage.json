@@ -95,7 +95,7 @@
                 },
                 {
                     "name": "keyword.declaration.jfm",
-                    "match": "\\b(let|fn)\\b"
+                    "match": "\\b(let|const|fn)\\b"
                 },
                 {
                     "name": "keyword.control.wildcard.jfm",
@@ -127,7 +127,7 @@
                 },
                 {
                     "name": "support.function.io.jfm",
-                    "match": "\\b(print|input|include)\\b"
+                    "match": "\\b(print|input|include|import)\\b"
                 },
                 {
                     "name": "support.function.generator.jfm",
@@ -198,6 +198,10 @@
                     "match": "="
                 },
                 {
+                    "name": "keyword.operator.pipe-update.jfm",
+                    "match": "\\|~"
+                },
+                {
                     "name": "keyword.operator.pipe.jfm",
                     "match": "\\|"
                 },
@@ -208,6 +212,10 @@
                 {
                     "name": "keyword.operator.arithmetic.jfm",
                     "match": "\\+|-|\\*|/|%|\\^"
+                },
+                {
+                    "name": "keyword.operator.module-access.jfm",
+                    "match": "::"
                 },
                 {
                     "name": "punctuation.separator.colon.jfm",
